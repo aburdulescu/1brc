@@ -23,3 +23,7 @@ Abidjan=-16.2/26.0/67.3
 Abéché=-10.0/29.4/69.0
 ...
 ```
+
+## Links
+
+https://simontoth.substack.com/p/daily-bite-of-c-optimizing-code-to
