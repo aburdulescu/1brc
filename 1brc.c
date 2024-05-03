@@ -88,11 +88,6 @@ typedef struct {
   TempStats stats[MAX_CITIES];
 } Database;
 
-typedef struct {
-  City city;    // max 100
-  double temp;  // [-99.9, 99.9]
-} Data;
-
 static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   // FNV-1a 32 bit
   static const uint32_t fnv1aInit32 = 2166136261;
