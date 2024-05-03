@@ -80,6 +80,7 @@ typedef struct {
   size_t len;
 } String;
 
+// TODO: this is useless, do everything in SplitLine
 static bool NextLine(String l, String* out) {
   char* p = memchr(l.ptr, '\n', l.len);
   if (p == NULL) {
