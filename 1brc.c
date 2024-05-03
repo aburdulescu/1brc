@@ -64,36 +64,37 @@ typedef struct {
   size_t len;
 } City;
 
-bool CityEquals(City* l, City* r) {
-  if (l->len != r->len) return false;
-  return memcmp(l->ptr, r->ptr, l->len) == 0;
-}
-
-void CitySet(City* c, const char* ptr, size_t len) {
+static void CitySet(City* c, const char* ptr, size_t len) {
   c->len = len;
   memcpy(c->ptr, ptr, c->len);
   c->ptr[c->len] = 0;
+}
+
+#define MAX_CITIES 10000
+
+typedef struct {
+  int64_t sum;
+  int16_t max;
+  int16_t min;
+} TempStats;
+
+typedef struct {
+  City cities[MAX_CITIES];
+  TempStats stats[MAX_CITIES];
+} Database;
+
+void DatabaseAdd(Database* db, City* city, uint32_t cityHash, int16_t temp) {
+  const size_t pos = cityHash % MAX_CITIES;
+  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city->ptr, city->len);
+  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
+  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
+  db->stats[pos].sum += temp;
 }
 
 typedef struct {
   char* ptr;
   size_t len;
 } String;
-
-// TODO: this is useless, do everything in SplitLine
-static bool NextLine(String l, String* out) {
-  char* p = memchr(l.ptr, '\n', l.len);
-  if (p == NULL) {
-    return false;
-  }
-  out->ptr = l.ptr;
-  out->len = p - l.ptr;
-  return true;
-}
-
-static String AdvanceLine(String l, size_t n) {
-  return (String){.ptr = l.ptr + n, .len = l.len - n};
-}
 
 typedef struct {
   City city;    // max 100
@@ -104,35 +105,52 @@ typedef struct {
 static const uint32_t fnv1aInit32 = 2166136261;
 static const uint32_t fnv1aPrime32 = 16777619;
 
-static bool SplitLine(String l, Data* d, uint32_t* cityHash) {
-  // find separator and also hash the city
-
+static bool processLine(String* l, Database* db) {
   char* sep = NULL;
-  uint32_t h = fnv1aInit32;
+  uint32_t cityHash = fnv1aInit32;
 
-  for (size_t i = 0; i < l.len; ++i) {
-    if (l.ptr[i] == ';') {
-      sep = l.ptr + i;
+  // find separator and also hash the city
+  for (size_t i = 0; i < l->len; ++i) {
+    if (l->ptr[i] == ';') {
+      sep = l->ptr + i;
       break;
     }
-    h ^= l.ptr[i];
-    h *= fnv1aPrime32;
+    cityHash ^= l->ptr[i];
+    cityHash *= fnv1aPrime32;
   }
   if (sep == NULL) {
     return false;
   }
 
-  *cityHash = h;
+  // find newline
+  char* nl = memchr(sep + 1, '\n', l->len);
+  if (nl == NULL) {
+    return false;
+  }
 
-  CitySet(&d->city, l.ptr, sep - l.ptr);
+  // city
+  const char* city = l->ptr;
+  const size_t city_len = sep - l->ptr;
 
-  // range [-99.9, 99.9]
-  char temp[6];
-  const size_t temp_len = l.len - d->city.len - 1;  // -1 for ;
-  memcpy(temp, sep + 1, temp_len);
-  temp[temp_len] = 0;
+  // temperature string, range [-99.9, 99.9]
+  char temp_str[6];
+  const size_t temp_len = nl - sep - 1;  // -1 for ;
+  memcpy(temp_str, sep + 1, temp_len);
+  temp_str[temp_len] = 0;
 
-  d->temp = parseTemp(temp);
+  // temperature
+  const int16_t temp = parseTemp(temp_str);
+
+  // update database
+  const size_t pos = cityHash % MAX_CITIES;
+  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city, city_len);
+  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
+  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
+  db->stats[pos].sum += temp;
+
+  // skip this line
+  l->ptr = nl + 1;
+  l->len -= city_len + temp_len + +2;
 
   return true;
 }
@@ -165,27 +183,6 @@ fd_close:
   return true;
 }
 
-#define MAX_CITIES 10000
-
-typedef struct {
-  int64_t sum;
-  int16_t max;
-  int16_t min;
-} TempStats;
-
-typedef struct {
-  City cities[MAX_CITIES];
-  TempStats stats[MAX_CITIES];
-} Database;
-
-void DatabaseAdd(Database* db, City* city, uint32_t cityHash, float temp) {
-  const size_t pos = cityHash % MAX_CITIES;
-  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city->ptr, city->len);
-  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
-  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
-  db->stats[pos].sum += temp;
-}
-
 static void test_parseTemp() {
   typedef struct {
     const char* input;
@@ -205,24 +202,27 @@ static void test_parseTemp() {
   }
 }
 
+static void run(String file) {
+  Database db = {};
+  for (String line = file; processLine(&line, &db);) {
+  }
+
+  for (size_t i = 0; i < MAX_CITIES; i++) {
+    if (db.cities[i].len == 0) continue;
+    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min / 10.0,
+           db.stats[i].max / 10.0, db.stats[i].sum / 10.0);
+  }
+  fflush(stdout);
+}
+
 static void test_NextLine() {
   char s[] =
       "aaaaa;23.2\n"
       "bbbbbbbbbb;-42.3\n";
 
-  String base = {.ptr = s, .len = strlen(s)};
-  for (String next = {}; NextLine(base, &next);
-       base = AdvanceLine(base, next.len + 1)) {
-    printf("base: %p %zu %c\n", base.ptr, base.len, base.ptr[0]);
-    printf("next: %p %zu %c\n", base.ptr, next.len, base.ptr[0]);
+  String file = {.ptr = s, .len = strlen(s)};
 
-    Data d = {};
-    uint32_t cityHash = 0;
-    if (!SplitLine(next, &d, &cityHash)) continue;
-
-    printf("city=%s\n", d.city.ptr);
-    printf("temp=%f\n", d.temp);
-  }
+  run(file);
 }
 
 static void run_tests() {
@@ -244,22 +244,7 @@ int main(int argc, char** argv) {
   String file = {};
   if (!mmapFile(filePath, &file)) return 1;
 
-  Database db = {};
-
-  for (String base = file, next = {}; NextLine(base, &next);
-       base = AdvanceLine(base, next.len + 1)) {
-    Data d = {};
-    uint32_t cityHash = 0;
-    if (!SplitLine(next, &d, &cityHash)) continue;
-    DatabaseAdd(&db, &d.city, cityHash, d.temp);
-  }
-
-  for (size_t i = 0; i < MAX_CITIES; i++) {
-    if (db.cities[i].len == 0) continue;
-    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min / 10.0,
-           db.stats[i].max / 10.0, db.stats[i].sum / 10.0);
-  }
-  fflush(stdout);
+  run(file);
 
   munmap(file.ptr, file.len);
 
