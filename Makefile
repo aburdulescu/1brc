@@ -13,3 +13,6 @@ build-debug:
 
 build-prof:
 	gcc -Wall -Wextra -Werror -g -O3 -march=native -fno-omit-frame-pointer 1brc.c
+
+build-prof-debug:
+	gcc -Wall -Wextra -Werror -g -O0 -march=native -fno-omit-frame-pointer 1brc.c
