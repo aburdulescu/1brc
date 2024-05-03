@@ -82,7 +82,6 @@ static void test_NextLine() {
       "bbbbbbbbbb;-42.3\n";
 
   String base = {.ptr = s, .len = strlen(s)};
-
   for (String next = {}; NextLine(base, &next);
        base = AdvanceLine(base, next.len + 1)) {
     printf("base: %p %zu %c\n", base.ptr, base.len, base.ptr[0]);
@@ -112,24 +111,11 @@ int main(int argc, char** argv) {
   String file = {};
   if (!mmapFile(filePath, &file)) return 1;
 
-  const uint64_t maxLines = 1000000000;
-  uint64_t lineCount = 1;
-
-  String base = file;
-
-  for (String next = {}; NextLine(base, &next);
+  for (String base = file, next = {}; NextLine(base, &next);
        base = AdvanceLine(base, next.len + 1)) {
     Data d = {};
     if (!SplitLine(next, &d)) continue;
-
-    // printf("city=%s\n", d.city);
-    // printf("temp=%s\n", d.temp);
-
-    printf("\r%f%% ", ((float)lineCount / (float)maxLines) * 100);
-    fflush(stdout);
-    lineCount++;
   }
-  printf("\n");
 
   munmap(file.ptr, file.len);
 

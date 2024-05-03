@@ -1,15 +1,18 @@
 release:
 	gcc -Wall -Wextra -Werror -g0 -O3 -march=native 1brc.c
-	/usr/bin/time -f "%e sec, %M kbytes" ./a.out
+	/usr/bin/time -f "%e seconds, %M kbytes" ./a.out
 
-debug: build
+debug: build-debug
 	./a.out
 
-debug10: build
+debug10: build-debug
 	./a.out measurements10.txt
 
-test: build
+test: build-debug
 	./a.out -t
 
-build:
+build-debug:
 	gcc -Wall -Wextra -Werror -g -fsanitize=address,undefined 1brc.c
+
+build-prof:
+	gcc -Wall -Wextra -Werror -g -O3 -march=native -fno-omit-frame-pointer 1brc.c
