@@ -8,10 +8,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static float parseTemp(const char* s) {
+static int16_t parseTemp(const char* s) {
   const bool isNegative = s[0] == '-';
 
-  float v = 0;
+  int16_t v = 0;
 
   if (isNegative) s++;
 
@@ -26,7 +26,6 @@ static float parseTemp(const char* s) {
 
   // add decimal part
   v = v * 10 + (*s - '0');
-  v /= 10;
 
   return isNegative ? (-1 * v) : v;
 }
@@ -131,9 +130,9 @@ fd_close:
 #define MAX_CITIES 10000
 
 typedef struct {
-  float max;
-  float min;
-  float sum;
+  int64_t sum;
+  int16_t max;
+  int16_t min;
 } TempStats;
 
 typedef struct {
@@ -156,8 +155,8 @@ static void test_parseTemp() {
   } Test;
 
   Test tests[] = {
-      {"0.0", 0.0},   {"1.1", 1.1},   {"-1.1", -1.1},
-      {"12.3", 12.3}, {"99.9", 99.9}, {"-99.9", -99.9},
+      {"0.0", 0},    {"1.1", 11},   {"-1.1", -11},
+      {"12.3", 123}, {"99.9", 999}, {"-99.9", -999},
   };
 
   for (size_t i = 0; i < sizeof(tests) / sizeof(Test); i++) {
@@ -217,8 +216,8 @@ int main(int argc, char** argv) {
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
     if (db.cities[i].len == 0) continue;
-    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min, db.stats[i].max,
-           db.stats[i].sum);
+    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min / 10.0,
+           db.stats[i].max / 10.0, db.stats[i].sum / 10.0);
   }
   fflush(stdout);
 
