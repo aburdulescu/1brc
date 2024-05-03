@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -6,6 +7,29 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+static float parseTemp(const char* s) {
+  const bool isNegative = s[0] == '-';
+
+  float v = 0;
+
+  if (isNegative) s++;
+
+  // add integer part
+  while (*s != '.') {
+    v = v * 10 + (*s - '0');
+    s++;
+  }
+
+  // skip .
+  s++;
+
+  // add decimal part
+  v = v * 10 + (*s - '0');
+  v /= 10;
+
+  return isNegative ? (-1 * v) : v;
+}
 
 typedef struct {
   char* ptr;
@@ -28,7 +52,7 @@ static String AdvanceLine(String l, size_t n) {
 
 typedef struct {
   char city[101];  // max 100
-  char temp[6];    // [-99.9, 99.9]
+  double temp;     // [-99.9, 99.9]
 } Data;
 
 static bool SplitLine(String l, Data* d) {
@@ -41,9 +65,14 @@ static bool SplitLine(String l, Data* d) {
   memcpy(d->city, l.ptr, city_len);
   d->city[city_len] = 0;
 
+  char temp[6];  // [-99.9, 99.9]
+
   const size_t temp_len = l.len - city_len - 1;  // -1 for ;
-  memcpy(d->temp, p + 1, temp_len);
-  d->temp[temp_len] = 0;
+
+  memcpy(temp, p + 1, temp_len);
+  temp[temp_len] = 0;
+
+  d->temp = parseTemp(temp);
 
   return true;
 }
@@ -76,6 +105,29 @@ fd_close:
   return true;
 }
 
+typedef struct {
+  String city;
+} DB;
+
+static void test_parseTemp() {
+  typedef struct {
+    const char* input;
+    float expected;
+  } Test;
+
+  Test tests[] = {
+      {"0.0", 0.0},   {"1.1", 1.1},   {"-1.1", -1.1},
+      {"12.3", 12.3}, {"99.9", 99.9}, {"-99.9", -99.9},
+  };
+
+  for (size_t i = 0; i < sizeof(tests) / sizeof(Test); i++) {
+    float v = parseTemp(tests[i].input);
+    printf("input=%s, want=%f, have=%f\n", tests[i].input, tests[i].expected,
+           v);
+    assert(v == tests[i].expected);
+  }
+}
+
 static void test_NextLine() {
   char s[] =
       "aaaaa;23.2\n"
@@ -91,11 +143,14 @@ static void test_NextLine() {
     if (!SplitLine(next, &d)) continue;
 
     printf("city=%s\n", d.city);
-    printf("temp=%s\n", d.temp);
+    printf("temp=%f\n", d.temp);
   }
 }
 
-static void run_tests() { test_NextLine(); }
+static void run_tests() {
+  test_NextLine();
+  test_parseTemp();
+}
 
 int main(int argc, char** argv) {
   if (argc > 1 && strcmp(argv[1], "-t") == 0) {
@@ -115,6 +170,8 @@ int main(int argc, char** argv) {
        base = AdvanceLine(base, next.len + 1)) {
     Data d = {};
     if (!SplitLine(next, &d)) continue;
+
+    // printf("city=%s, temp=%f\n", d.city, d.temp);
   }
 
   munmap(file.ptr, file.len);
