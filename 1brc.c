@@ -47,6 +47,15 @@ void CitySet(City* c, const char* ptr, size_t len) {
   c->ptr[c->len] = 0;
 }
 
+static uint32_t CityHash(City* c) {
+  uint32_t h = 2166136261;
+  for (size_t i = 0; i < c->len; i++) {
+    h ^= c->ptr[i];
+    h *= 16777619;
+  }
+  return h;
+}
+
 typedef struct {
   char* ptr;
   size_t len;
@@ -129,29 +138,14 @@ typedef struct {
 typedef struct {
   City cities[MAX_CITIES];
   TempStats stats[MAX_CITIES];
-  size_t len;
 } Database;
 
 void DatabaseAdd(Database* db, City* city, float temp) {
-  int pos = -1;
-  for (size_t i = 0; i < db->len; i++) {
-    if (CityEquals(&db->cities[i], city)) {
-      pos = i;
-      break;
-    }
-  }
-  if (pos == -1) {
-    pos = db->len;
-    ++db->len;
-    CitySet(&db->cities[pos], city->ptr, city->len);
-    db->stats[pos].max = temp;
-    db->stats[pos].min = temp;
-    db->stats[pos].sum = temp;
-  } else {
-    if (temp > db->stats[pos].max) db->stats[pos].max = temp;
-    if (temp < db->stats[pos].min) db->stats[pos].min = temp;
-    db->stats[pos].sum += temp;
-  }
+  const size_t pos = CityHash(city) % MAX_CITIES;
+  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city->ptr, city->len);
+  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
+  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
+  db->stats[pos].sum += temp;
 }
 
 static void test_parseTemp() {
@@ -220,7 +214,8 @@ int main(int argc, char** argv) {
     DatabaseAdd(&db, &d.city, d.temp);
   }
 
-  for (size_t i = 0; i < db.len; i++) {
+  for (size_t i = 0; i < MAX_CITIES; i++) {
+    if (db.cities[i].len == 0) continue;
     printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min, db.stats[i].max,
            db.stats[i].sum);
   }
