@@ -9,6 +9,11 @@
 #include <unistd.h>
 
 typedef struct {
+  char* ptr;
+  size_t len;
+} String;
+
+typedef struct {
   int16_t mul;
   int16_t val;
 } TempTableEntry;
@@ -48,11 +53,11 @@ static const TempTableEntry tempTable[256] = {
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
 };
 
-static int16_t parseTemp(const char* s) {
-  const bool isNegative = s[0] == '-';
+static int16_t tempToInt(const char* temp) {
+  const bool isNegative = temp[0] == '-';
   int16_t result = 0;
-  for (; *s != '\0'; ++s) {
-    const size_t i = *s;
+  for (; *temp != '\0'; ++temp) {
+    const size_t i = *temp;
     result *= tempTable[i].mul;
     result += tempTable[i].val;
   }
@@ -64,9 +69,9 @@ typedef struct {
   size_t len;
 } City;
 
-static void CitySet(City* c, const char* ptr, size_t len) {
-  c->len = len;
-  memcpy(c->ptr, ptr, c->len);
+static void SetCity(City* c, String s) {
+  c->len = s.len;
+  memcpy(c->ptr, s.ptr, c->len);
   c->ptr[c->len] = 0;
 }
 
@@ -83,74 +88,81 @@ typedef struct {
   TempStats stats[MAX_CITIES];
 } Database;
 
-void DatabaseAdd(Database* db, City* city, uint32_t cityHash, int16_t temp) {
-  const size_t pos = cityHash % MAX_CITIES;
-  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city->ptr, city->len);
-  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
-  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
-  db->stats[pos].sum += temp;
-}
-
-typedef struct {
-  char* ptr;
-  size_t len;
-} String;
-
 typedef struct {
   City city;    // max 100
   double temp;  // [-99.9, 99.9]
 } Data;
 
-// FNV-1a 32 bit
-static const uint32_t fnv1aInit32 = 2166136261;
-static const uint32_t fnv1aPrime32 = 16777619;
-
-static bool processLine(String* l, Database* db) {
-  char* sep = NULL;
-  uint32_t cityHash = fnv1aInit32;
+static bool parseCity(String* l, String* city, uint32_t* city_hash) {
+  // FNV-1a 32 bit
+  static const uint32_t fnv1aInit32 = 2166136261;
+  static const uint32_t fnv1aPrime32 = 16777619;
 
   // find separator and also hash the city
+  char* sep = NULL;
+  uint32_t h = fnv1aInit32;
   for (size_t i = 0; i < l->len; ++i) {
     if (l->ptr[i] == ';') {
       sep = l->ptr + i;
       break;
     }
-    cityHash ^= l->ptr[i];
-    cityHash *= fnv1aPrime32;
+    h ^= l->ptr[i];
+    h *= fnv1aPrime32;
   }
   if (sep == NULL) {
     return false;
   }
 
+  // set city
+  city->ptr = l->ptr;
+  city->len = sep - l->ptr;
+
+  // set hash
+  *city_hash = h;
+
+  // skip
+  l->ptr = sep + 1;
+  l->len -= city->len + 1;
+
+  return true;
+}
+
+static bool parseTemp(String* l, int16_t* temp) {
   // find newline
-  char* nl = memchr(sep + 1, '\n', l->len);
+  char* nl = memchr(l->ptr, '\n', l->len);
   if (nl == NULL) {
     return false;
   }
 
-  // city
-  const char* city = l->ptr;
-  const size_t city_len = sep - l->ptr;
-
   // temperature string, range [-99.9, 99.9]
   char temp_str[6];
-  const size_t temp_len = nl - sep - 1;  // -1 for ;
-  memcpy(temp_str, sep + 1, temp_len);
+  const size_t temp_len = nl - l->ptr;  // -1 for ;
+  memcpy(temp_str, l->ptr, temp_len);
   temp_str[temp_len] = 0;
 
-  // temperature
-  const int16_t temp = parseTemp(temp_str);
+  *temp = tempToInt(temp_str);
+
+  // skip
+  l->ptr = nl + 1;
+  l->len -= temp_len + 1;
+
+  return true;
+}
+
+static bool parseLine(String* l, Database* db) {
+  String city = {};
+  uint32_t city_hash = 0;
+  if (!parseCity(l, &city, &city_hash)) return false;
+
+  int16_t temp = 0;
+  if (!parseTemp(l, &temp)) return false;
 
   // update database
-  const size_t pos = cityHash % MAX_CITIES;
-  if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city, city_len);
+  const size_t pos = city_hash % MAX_CITIES;
+  if (db->cities[pos].len == 0) SetCity(&db->cities[pos], city);
   if (temp > db->stats[pos].max) db->stats[pos].max = temp;
   if (temp < db->stats[pos].min) db->stats[pos].min = temp;
   db->stats[pos].sum += temp;
-
-  // skip this line
-  l->ptr = nl + 1;
-  l->len -= city_len + temp_len + +2;
 
   return true;
 }
@@ -195,7 +207,7 @@ static void test_parseTemp() {
   };
 
   for (size_t i = 0; i < sizeof(tests) / sizeof(Test); i++) {
-    int16_t v = parseTemp(tests[i].input);
+    int16_t v = tempToInt(tests[i].input);
     printf("input=%s, want=%d, have=%d\n", tests[i].input, tests[i].expected,
            v);
     assert(v == tests[i].expected);
@@ -204,7 +216,7 @@ static void test_parseTemp() {
 
 static void run(String file) {
   Database db = {};
-  for (String line = file; processLine(&line, &db);) {
+  for (String line = file; parseLine(&line, &db);) {
   }
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
