@@ -75,16 +75,6 @@ void CitySet(City* c, const char* ptr, size_t len) {
   c->ptr[c->len] = 0;
 }
 
-// FNV-1a 32 bit
-static uint32_t CityHash(City* c) {
-  uint32_t h = 2166136261;
-  for (size_t i = 0; i < c->len; i++) {
-    h ^= c->ptr[i];
-    h *= 16777619;
-  }
-  return h;
-}
-
 typedef struct {
   char* ptr;
   size_t len;
@@ -109,18 +99,36 @@ typedef struct {
   double temp;  // [-99.9, 99.9]
 } Data;
 
-static bool SplitLine(String l, Data* d) {
-  char* p = memchr(l.ptr, ';', l.len);
-  if (p == NULL) {
+// FNV-1a 32 bit
+static const uint32_t fnv1aInit32 = 2166136261;
+static const uint32_t fnv1aPrime32 = 16777619;
+
+static bool SplitLine(String l, Data* d, uint32_t* cityHash) {
+  // find separator and also hash the city
+
+  char* sep = NULL;
+  uint32_t h = fnv1aInit32;
+
+  for (size_t i = 0; i < l.len; ++i) {
+    if (l.ptr[i] == ';') {
+      sep = l.ptr + i;
+      break;
+    }
+    h ^= l.ptr[i];
+    h *= fnv1aPrime32;
+  }
+  if (sep == NULL) {
     return false;
   }
 
-  CitySet(&d->city, l.ptr, p - l.ptr);
+  *cityHash = h;
+
+  CitySet(&d->city, l.ptr, sep - l.ptr);
 
   // range [-99.9, 99.9]
   char temp[6];
   const size_t temp_len = l.len - d->city.len - 1;  // -1 for ;
-  memcpy(temp, p + 1, temp_len);
+  memcpy(temp, sep + 1, temp_len);
   temp[temp_len] = 0;
 
   d->temp = parseTemp(temp);
@@ -169,8 +177,8 @@ typedef struct {
   TempStats stats[MAX_CITIES];
 } Database;
 
-void DatabaseAdd(Database* db, City* city, float temp) {
-  const size_t pos = CityHash(city) % MAX_CITIES;
+void DatabaseAdd(Database* db, City* city, uint32_t cityHash, float temp) {
+  const size_t pos = cityHash % MAX_CITIES;
   if (db->cities[pos].len == 0) CitySet(&db->cities[pos], city->ptr, city->len);
   if (temp > db->stats[pos].max) db->stats[pos].max = temp;
   if (temp < db->stats[pos].min) db->stats[pos].min = temp;
@@ -208,7 +216,8 @@ static void test_NextLine() {
     printf("next: %p %zu %c\n", base.ptr, next.len, base.ptr[0]);
 
     Data d = {};
-    if (!SplitLine(next, &d)) continue;
+    uint32_t cityHash = 0;
+    if (!SplitLine(next, &d, &cityHash)) continue;
 
     printf("city=%s\n", d.city.ptr);
     printf("temp=%f\n", d.temp);
@@ -239,8 +248,9 @@ int main(int argc, char** argv) {
   for (String base = file, next = {}; NextLine(base, &next);
        base = AdvanceLine(base, next.len + 1)) {
     Data d = {};
-    if (!SplitLine(next, &d)) continue;
-    DatabaseAdd(&db, &d.city, d.temp);
+    uint32_t cityHash = 0;
+    if (!SplitLine(next, &d, &cityHash)) continue;
+    DatabaseAdd(&db, &d.city, cityHash, d.temp);
   }
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
