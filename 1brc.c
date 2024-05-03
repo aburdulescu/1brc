@@ -47,6 +47,7 @@ void CitySet(City* c, const char* ptr, size_t len) {
   c->ptr[c->len] = 0;
 }
 
+// FNV-1a 32 bit
 static uint32_t CityHash(City* c) {
   uint32_t h = 2166136261;
   for (size_t i = 0; i < c->len; i++) {
