@@ -27,3 +27,7 @@ Abéché=-10.0/29.4/69.0
 ## Links
 
 https://simontoth.substack.com/p/daily-bite-of-c-optimizing-code-to
+
+https://github.com/HappyCerberus/1brc
+
+https://github.com/gunnarmorling/1brc?tab=readme-ov-file#running-the-challenge
