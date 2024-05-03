@@ -63,7 +63,7 @@ typedef struct {
 } String;
 
 static bool NextLine(String l, String* out) {
-  char* p = strchr(l.ptr, '\n');
+  char* p = memchr(l.ptr, '\n', l.len);
   if (p == NULL) {
     return false;
   }
@@ -82,7 +82,7 @@ typedef struct {
 } Data;
 
 static bool SplitLine(String l, Data* d) {
-  char* p = strchr(l.ptr, ';');
+  char* p = memchr(l.ptr, ';', l.len);
   if (p == NULL) {
     return false;
   }
