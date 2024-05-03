@@ -3,10 +3,7 @@ release:
 	/usr/bin/time -f "%e seconds, %M kbytes" ./a.out
 
 debug: build-debug
-	./a.out
-
-debug10: build-debug
-	./a.out measurements10.txt
+	./a.out measurements_small.txt
 
 test: build-debug
 	./a.out -t

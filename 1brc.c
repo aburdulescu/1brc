@@ -32,6 +32,22 @@ static float parseTemp(const char* s) {
 }
 
 typedef struct {
+  char ptr[101];
+  size_t len;
+} City;
+
+bool CityEquals(City* l, City* r) {
+  if (l->len != r->len) return false;
+  return memcmp(l->ptr, r->ptr, l->len) == 0;
+}
+
+void CitySet(City* c, const char* ptr, size_t len) {
+  c->len = len;
+  memcpy(c->ptr, ptr, c->len);
+  c->ptr[c->len] = 0;
+}
+
+typedef struct {
   char* ptr;
   size_t len;
 } String;
@@ -51,8 +67,8 @@ static String AdvanceLine(String l, size_t n) {
 }
 
 typedef struct {
-  char city[101];  // max 100
-  double temp;     // [-99.9, 99.9]
+  City city;    // max 100
+  double temp;  // [-99.9, 99.9]
 } Data;
 
 static bool SplitLine(String l, Data* d) {
@@ -61,14 +77,11 @@ static bool SplitLine(String l, Data* d) {
     return false;
   }
 
-  const size_t city_len = p - l.ptr;
-  memcpy(d->city, l.ptr, city_len);
-  d->city[city_len] = 0;
+  CitySet(&d->city, l.ptr, p - l.ptr);
 
-  char temp[6];  // [-99.9, 99.9]
-
-  const size_t temp_len = l.len - city_len - 1;  // -1 for ;
-
+  // range [-99.9, 99.9]
+  char temp[6];
+  const size_t temp_len = l.len - d->city.len - 1;  // -1 for ;
   memcpy(temp, p + 1, temp_len);
   temp[temp_len] = 0;
 
@@ -105,9 +118,41 @@ fd_close:
   return true;
 }
 
+#define MAX_CITIES 10000
+
 typedef struct {
-  String city;
-} DB;
+  float max;
+  float min;
+  float sum;
+} TempStats;
+
+typedef struct {
+  City cities[MAX_CITIES];
+  TempStats stats[MAX_CITIES];
+  size_t len;
+} Database;
+
+void DatabaseAdd(Database* db, City* city, float temp) {
+  int pos = -1;
+  for (size_t i = 0; i < db->len; i++) {
+    if (CityEquals(&db->cities[i], city)) {
+      pos = i;
+      break;
+    }
+  }
+  if (pos == -1) {
+    pos = db->len;
+    ++db->len;
+    CitySet(&db->cities[pos], city->ptr, city->len);
+    db->stats[pos].max = temp;
+    db->stats[pos].min = temp;
+    db->stats[pos].sum = temp;
+  } else {
+    if (temp > db->stats[pos].max) db->stats[pos].max = temp;
+    if (temp < db->stats[pos].min) db->stats[pos].min = temp;
+    db->stats[pos].sum += temp;
+  }
+}
 
 static void test_parseTemp() {
   typedef struct {
@@ -142,7 +187,7 @@ static void test_NextLine() {
     Data d = {};
     if (!SplitLine(next, &d)) continue;
 
-    printf("city=%s\n", d.city);
+    printf("city=%s\n", d.city.ptr);
     printf("temp=%f\n", d.temp);
   }
 }
@@ -166,13 +211,20 @@ int main(int argc, char** argv) {
   String file = {};
   if (!mmapFile(filePath, &file)) return 1;
 
+  Database db = {};
+
   for (String base = file, next = {}; NextLine(base, &next);
        base = AdvanceLine(base, next.len + 1)) {
     Data d = {};
     if (!SplitLine(next, &d)) continue;
-
-    // printf("city=%s, temp=%f\n", d.city, d.temp);
+    DatabaseAdd(&db, &d.city, d.temp);
   }
+
+  for (size_t i = 0; i < db.len; i++) {
+    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min, db.stats[i].max,
+           db.stats[i].sum);
+  }
+  fflush(stdout);
 
   munmap(file.ptr, file.len);
 
