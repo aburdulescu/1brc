@@ -15,15 +15,30 @@ typedef struct {
   size_t len;
 } String;
 
-char* StringPrintable(String s) {
+static String StringFromCstr(char* c) {
+  String s = {.ptr = c, .len = strlen(c)};
+  return s;
+}
+
+static String StringSlice(String s, size_t begin, size_t end) {
+  String r = {.ptr = s.ptr + begin, .len = end};
+  return r;
+}
+
+char* StringToCstr(String s) {
   char* c = malloc(s.len + 1);
   memcpy(c, s.ptr, s.len);
   c[s.len] = 0;
   return c;
 }
 
-static char* StringFindChar(String s, char c) {
-  return memchr(s.ptr, c, s.len);
+static char* StringFind(String s, char c) { return memchr(s.ptr, c, s.len); }
+
+static char* StringRfind(String s, char c) {
+  for (int i = s.len - 1; i >= 0; --i) {
+    if (s.ptr[i] == c) return s.ptr + i;
+  }
+  return NULL;
 }
 
 static char* printableCity(String city) {
@@ -100,7 +115,7 @@ typedef struct {
   size_t list_len;
 } Database;
 
-void updateDatabase(Database* db, String city, uint32_t city_hash,
+void DatabaseUpdate(Database* db, String city, uint32_t city_hash,
                     int16_t temp) {
   DatabaseEntry* e = &db->entries[city_hash % MAX_CITIES];
   if (e->city.len == 0) {
@@ -148,14 +163,36 @@ static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   return true;
 }
 
+static bool parseTemp(String* l, int16_t* temp) {
+  // find newline
+  char* nl = StringFind(*l, '\n');
+  if (nl == NULL) {
+    return false;
+  }
+
+  String temp_str = {
+      .ptr = l->ptr,
+      .len = nl - l->ptr,
+  };
+
+  *temp = tempToInt(temp_str);
+
+  // skip
+  l->ptr = nl + 1;
+  l->len -= temp_str.len + 1;
+
+  return true;
+}
+
 static bool parseLine(String* l, Database* db) {
   String city = {};
   uint32_t city_hash = 0;
   if (!parseCity(l, &city, &city_hash)) return false;
 
-  const int16_t temp = tempToInt(*l);
+  int16_t temp = 0;
+  if (!parseTemp(l, &temp)) return false;
 
-  updateDatabase(db, city, city_hash, temp);
+  DatabaseUpdate(db, city, city_hash, temp);
 
   return true;
 }
@@ -191,34 +228,116 @@ fd_close:
 typedef struct {
   String iter;
   mtx_t mtx;
+  size_t chunk_size;
 } File;
 
-static bool initFile(File* f, String file) {
+static bool FileInit(File* f, String file, size_t chunk_size) {
   if (mtx_init(&f->mtx, mtx_plain) != thrd_success) {
     return false;
   }
   f->iter = file;
+  f->chunk_size = chunk_size;
   return true;
 }
 
-static bool nextLine(File* f, String* line) {
+static bool FileNextChunk(File* f, String* chunk) {
   if (mtx_lock(&f->mtx) != thrd_success) {
     return false;
   }
 
-  char* p = StringFindChar(f->iter, '\n');
+  if (f->iter.len == 0) {
+    mtx_unlock(&f->mtx);
+    return false;
+  }
+
+  if (f->iter.len < f->chunk_size) {
+    *chunk = f->iter;
+    f->iter = (String){};
+    mtx_unlock(&f->mtx);
+    return true;
+  }
+
+  char* p = StringRfind(StringSlice(f->iter, 0, f->chunk_size), '\n');
   if (p == NULL) {
     mtx_unlock(&f->mtx);
     return false;
   }
 
-  line->ptr = f->iter.ptr;
-  line->len = p - f->iter.ptr;
+  chunk->ptr = f->iter.ptr;
+  chunk->len = p - f->iter.ptr + 1;
 
   f->iter.ptr = p + 1;
-  f->iter.len -= line->len + 1;
+  f->iter.len -= chunk->len;
 
   return mtx_unlock(&f->mtx) == thrd_success;
+}
+
+static int citySorter(const void* a, const void* b) {
+  const DatabaseEntry* l = *(const DatabaseEntry**)a;
+  const DatabaseEntry* r = *(const DatabaseEntry**)b;
+
+  const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
+
+  const int result = memcmp(l->city.ptr, r->city.ptr, len);
+
+  // if common part is the same, put first the smaller one
+  if (result == 0) return l->city.len - r->city.len;
+
+  return result;
+}
+
+static void run(String file) {
+  Database db = {};
+  for (String line = file; parseLine(&line, &db);) {
+  }
+
+  qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter);
+
+  for (size_t i = 0; i < db.list_len; ++i) {
+    const DatabaseEntry* e = db.list[i];
+    if (e->city.len == 0) continue;
+    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
+           (e->sum / 10.0) / e->count, e->max / 10.0);
+  }
+
+  fflush(stdout);
+}
+
+typedef struct {
+  File* f;
+  Database* db;
+} WorkerData;
+
+static int worker_entrypoint(void* arg) {
+  WorkerData* wd = (WorkerData*)arg;
+
+  for (String chunk = {}; FileNextChunk(wd->f, &chunk);) {
+    while (parseLine(&chunk, wd->db)) {
+    }
+  }
+
+  for (size_t i = 0; i < wd->db->list_len; ++i) {
+    printf("%s\n", printableCity(wd->db->list[i]->city));
+  }
+
+  printf("len: %zu\n", wd->db->list_len);
+
+  return 0;
+}
+
+static void test_StringRfind() {
+  {
+    char* p = StringRfind(StringFromCstr("abcXdef"), 'X');
+    assert(p != NULL);
+  }
+  {
+    char* p = StringRfind(StringFromCstr("abcdefX"), 'X');
+    assert(p != NULL);
+  }
+  {
+    char* p = StringRfind(StringFromCstr("abcdef"), 'X');
+    assert(p == NULL);
+  }
 }
 
 static void test_parseTemp() {
@@ -233,81 +352,14 @@ static void test_parseTemp() {
   };
 
   for (size_t i = 0; i < sizeof(tests) / sizeof(Test); i++) {
-    const int16_t v = tempToInt((String){
-        .ptr = tests[i].input,
-        .len = strlen(tests[i].input),
-    });
+    const int16_t v = tempToInt(StringFromCstr(tests[i].input));
     printf("input=%s, want=%d, have=%d\n", tests[i].input, tests[i].expected,
            v);
     assert(v == tests[i].expected);
   }
 }
 
-/* static int citySorter(const void* a, const void* b) { */
-/*   const DatabaseEntry* l = *(const DatabaseEntry**)a; */
-/*   const DatabaseEntry* r = *(const DatabaseEntry**)b; */
-
-/*   const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
- */
-
-/*   const int result = memcmp(l->city.ptr, r->city.ptr, len); */
-
-/*   // if common part is the same, put first the smaller one */
-/*   if (result == 0) return l->city.len - r->city.len; */
-
-/*   return result; */
-/* } */
-
-/* static void run(String file) { */
-/*   Database db = {}; */
-/*   for (String line = file; parseLine(&line, &db);) { */
-/*   } */
-
-/*   qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter); */
-
-/*   for (size_t i = 0; i < db.list_len; ++i) { */
-/*     const DatabaseEntry* e = db.list[i]; */
-/*     if (e->city.len == 0) continue; */
-/*     printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0, */
-/*            (e->sum / 10.0) / e->count, e->max / 10.0); */
-/*   } */
-
-/*   fflush(stdout); */
-/* } */
-
-typedef struct {
-  File* f;
-  Database* db;
-} WorkerData;
-
-static int worker_entrypoint(void* arg) {
-  WorkerData* wd = (WorkerData*)arg;
-
-  for (String line = {}; nextLine(wd->f, &line);) {
-    parseLine(&line, wd->db);
-  }
-
-  for (size_t i = 0; i < wd->db->list_len; ++i) {
-    printf("%s\n", printableCity(wd->db->list[i]->city));
-  }
-
-  printf("db len: %zu\n", wd->db->list_len);
-
-  return 0;
-}
-
-/* static void test_parseLine() { */
-/*   char s[] = */
-/*       "aaaaaxxx;23.2\n" */
-/*       "aaaaa;23.2\n" */
-/*       "bbbbbbbbbb;-42.3\n"; */
-
-/*   String file = {.ptr = s, .len = strlen(s)}; */
-
-/*   run(file); */
-/* } */
-
-static void test_worker() {
+static void test_parseLine() {
   char s[] =
       "aaaaaxxx;23.2\n"
       "aaaaa;23.2\n"
@@ -315,8 +367,17 @@ static void test_worker() {
 
   String file = {.ptr = s, .len = strlen(s)};
 
+  run(file);
+}
+
+static void test_worker() {
+  String file = StringFromCstr(
+      "aaaaaxxx;23.2\n"
+      "aaaaa;23.2\n"
+      "bbbbbbbbbb;-42.3\n");
+
   File f = {};
-  initFile(&f, file);
+  FileInit(&f, file, 32);
 
   Database db = {};
 
@@ -329,9 +390,11 @@ static void test_worker() {
 }
 
 static void run_tests() {
+  test_StringRfind();
   test_parseTemp();
-  //  test_parseLine();
   test_worker();
+
+  (void)test_parseLine;
 }
 
 int main(int argc, char** argv) {
@@ -348,10 +411,10 @@ int main(int argc, char** argv) {
   String file = {};
   if (!mmapFile(file_path, &file)) return 1;
 
-  File f = {};
-  if (!initFile(&f, file)) return 1;
-
   const int num_workers = sysconf(_SC_NPROCESSORS_ONLN);
+
+  File f = {};
+  if (!FileInit(&f, file, file.len / num_workers)) return 1;
 
   Database* databases = malloc(sizeof(Database) * num_workers);
 
