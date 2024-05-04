@@ -444,7 +444,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  const char* file_path = "measurements.txt";
+  const char* file_path = "1brc/measurements.txt";
   if (argc > 1) {
     file_path = argv[1];
   }

@@ -24,6 +24,22 @@ Abéché=-10.0/29.4/69.0
 ...
 ```
 
+## Usage
+
+Install java 21: `nix-shell -p openjdk21`
+
+Clone this repo: https://github.com/gunnarmorling/1brc
+
+And cd into it: `cd 1brc`
+
+Generate `measurements.txt`: `./create_measurements.sh 1000000000`
+
+Generate file with "golden" output: `./calculate_average_baseline.sh > golden.txt`
+
+Go back to our repo: `cd ..`
+
+Compile and un code: `make`
+
 ## Links
 
 https://simontoth.substack.com/p/daily-bite-of-c-optimizing-code-to

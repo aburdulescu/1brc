@@ -4,7 +4,7 @@ release: build-release
 	/usr/bin/time -f "%e seconds, %M kbytes" ./a.out
 
 debug: build-asan
-	./a.out measurements_small.txt
+	./a.out 1brc/measurements_small.txt
 
 test: build-asan
 	./a.out test
@@ -17,3 +17,7 @@ build-release:
 
 build-debug:
 	gcc $(CFLAGS) -O0 -march=native 1brc.c
+
+profile: build-debug
+	LD_PRELOAD=$(shell pwd)/gperftool-dist/lib/libprofiler.so CPUPROFILE=cpu.prof ./a.out
+	pprof -http=: cpu.prof
