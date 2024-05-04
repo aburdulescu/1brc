@@ -75,15 +75,20 @@ static char* printableCity(String city) {
 #define MAX_CITIES 10000
 
 typedef struct {
-  String city;
-  int64_t sum;
-  int16_t max;
-  int16_t min;
-} DatabaseEntry;
-
-typedef struct {
-  DatabaseEntry entries[MAX_CITIES];
+  String cities[MAX_CITIES];
+  int64_t sums[MAX_CITIES];
+  int16_t mins[MAX_CITIES];
+  int16_t maxs[MAX_CITIES];
 } Database;
+
+void updateDatabase(Database* db, String city, uint32_t city_hash,
+                    int16_t temp) {
+  const size_t pos = city_hash % MAX_CITIES;
+  if (db->cities[pos].len == 0) db->cities[pos] = city;
+  if (temp > db->maxs[pos]) db->maxs[pos] = temp;
+  if (temp < db->mins[pos]) db->mins[pos] = temp;
+  db->sums[pos] += temp;
+}
 
 static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   // FNV-1a 32 bit
@@ -148,12 +153,7 @@ static bool parseLine(String* l, Database* db) {
   int16_t temp = 0;
   if (!parseTemp(l, &temp)) return false;
 
-  // update database
-  const size_t pos = city_hash % MAX_CITIES;
-  db->entries[pos].city = city;
-  if (temp > db->entries[pos].max) db->entries[pos].max = temp;
-  if (temp < db->entries[pos].min) db->entries[pos].min = temp;
-  db->entries[pos].sum += temp;
+  updateDatabase(db, city, city_hash, temp);
 
   return true;
 }
@@ -214,10 +214,9 @@ static void run(String file) {
   }
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
-    if (db.entries[i].city.len == 0) continue;
-    printf("%s %f %f %f\n", printableCity(db.entries[i].city),
-           db.entries[i].min / 10.0, db.entries[i].max / 10.0,
-           db.entries[i].sum / 10.0);
+    if (db.cities[i].len == 0) continue;
+    printf("%s %f %f %f\n", printableCity(db.cities[i]), db.mins[i] / 10.0,
+           db.maxs[i] / 10.0, db.sums[i] / 10.0);
   }
   fflush(stdout);
 }
