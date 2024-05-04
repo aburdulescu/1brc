@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -18,7 +19,7 @@ typedef struct {
   int16_t val;
 } TempTableEntry;
 
-static const TempTableEntry tempTable[256] = {
+static const TempTableEntry temp_table[256] = {
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
@@ -53,56 +54,52 @@ static const TempTableEntry tempTable[256] = {
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
 };
 
-static int16_t tempToInt(const char* temp) {
-  const bool isNegative = temp[0] == '-';
+static int16_t tempToInt(String temp) {
   int16_t result = 0;
-  for (; *temp != '\0'; ++temp) {
-    const size_t i = *temp;
-    result *= tempTable[i].mul;
-    result += tempTable[i].val;
+  for (size_t i = 0; i < temp.len; ++i) {
+    const uint8_t c = temp.ptr[i];
+    result *= temp_table[c].mul;
+    result += temp_table[c].val;
   }
-  return isNegative ? (-1 * result) : result;
+  const bool is_negative = temp.ptr[0] == '-';
+  return is_negative ? (-1 * result) : result;
 }
 
-typedef struct {
-  char ptr[101];
-  size_t len;
-} City;
-
-static void SetCity(City* c, String s) {
-  c->len = s.len;
-  memcpy(c->ptr, s.ptr, c->len);
-  c->ptr[c->len] = 0;
+static char* printableCity(String city) {
+  static char s[101];
+  memcpy(s, city.ptr, city.len);
+  s[city.len] = 0;
+  return s;
 }
 
 #define MAX_CITIES 10000
 
 typedef struct {
+  String city;
   int64_t sum;
   int16_t max;
   int16_t min;
-} TempStats;
+} DatabaseEntry;
 
 typedef struct {
-  City cities[MAX_CITIES];
-  TempStats stats[MAX_CITIES];
+  DatabaseEntry entries[MAX_CITIES];
 } Database;
 
 static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   // FNV-1a 32 bit
-  static const uint32_t fnv1aInit32 = 2166136261;
-  static const uint32_t fnv1aPrime32 = 16777619;
+  static const uint32_t fnv1a_init_32 = 2166136261;
+  static const uint32_t fnv1a_prime_32 = 16777619;
 
   // find separator and also hash the city
   char* sep = NULL;
-  uint32_t h = fnv1aInit32;
+  uint32_t h = fnv1a_init_32;
   for (size_t i = 0; i < l->len; ++i) {
     if (l->ptr[i] == ';') {
       sep = l->ptr + i;
       break;
     }
     h ^= l->ptr[i];
-    h *= fnv1aPrime32;
+    h *= fnv1a_prime_32;
   }
   if (sep == NULL) {
     return false;
@@ -129,17 +126,16 @@ static bool parseTemp(String* l, int16_t* temp) {
     return false;
   }
 
-  // temperature string, range [-99.9, 99.9]
-  char temp_str[6];
-  const size_t temp_len = nl - l->ptr;  // -1 for ;
-  memcpy(temp_str, l->ptr, temp_len);
-  temp_str[temp_len] = 0;
+  String temp_str = {
+      .ptr = l->ptr,
+      .len = nl - l->ptr,
+  };
 
   *temp = tempToInt(temp_str);
 
   // skip
   l->ptr = nl + 1;
-  l->len -= temp_len + 1;
+  l->len -= temp_str.len + 1;
 
   return true;
 }
@@ -154,10 +150,10 @@ static bool parseLine(String* l, Database* db) {
 
   // update database
   const size_t pos = city_hash % MAX_CITIES;
-  if (db->cities[pos].len == 0) SetCity(&db->cities[pos], city);
-  if (temp > db->stats[pos].max) db->stats[pos].max = temp;
-  if (temp < db->stats[pos].min) db->stats[pos].min = temp;
-  db->stats[pos].sum += temp;
+  db->entries[pos].city = city;
+  if (temp > db->entries[pos].max) db->entries[pos].max = temp;
+  if (temp < db->entries[pos].min) db->entries[pos].min = temp;
+  db->entries[pos].sum += temp;
 
   return true;
 }
@@ -192,7 +188,7 @@ fd_close:
 
 static void test_parseTemp() {
   typedef struct {
-    const char* input;
+    char* input;
     int16_t expected;
   } Test;
 
@@ -202,7 +198,10 @@ static void test_parseTemp() {
   };
 
   for (size_t i = 0; i < sizeof(tests) / sizeof(Test); i++) {
-    int16_t v = tempToInt(tests[i].input);
+    const int16_t v = tempToInt((String){
+        .ptr = tests[i].input,
+        .len = strlen(tests[i].input),
+    });
     printf("input=%s, want=%d, have=%d\n", tests[i].input, tests[i].expected,
            v);
     assert(v == tests[i].expected);
@@ -215,9 +214,10 @@ static void run(String file) {
   }
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
-    if (db.cities[i].len == 0) continue;
-    printf("%s %f %f %f\n", db.cities[i].ptr, db.stats[i].min / 10.0,
-           db.stats[i].max / 10.0, db.stats[i].sum / 10.0);
+    if (db.entries[i].city.len == 0) continue;
+    printf("%s %f %f %f\n", printableCity(db.entries[i].city),
+           db.entries[i].min / 10.0, db.entries[i].max / 10.0,
+           db.entries[i].sum / 10.0);
   }
   fflush(stdout);
 }
@@ -243,13 +243,13 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  const char* filePath = "measurements.txt";
+  const char* file_path = "measurements.txt";
   if (argc > 1) {
-    filePath = argv[1];
+    file_path = argv[1];
   }
 
   String file = {};
-  if (!mmapFile(filePath, &file)) return 1;
+  if (!mmapFile(file_path, &file)) return 1;
 
   run(file);
 
