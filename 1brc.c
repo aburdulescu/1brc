@@ -315,12 +315,25 @@ static int citySorter(const void* a, const void* b) {
   return result;
 }
 
+void processDatabase(Database* db) {
+  qsort(db->list, db->list_len, sizeof(DatabaseEntry*), citySorter);
+
+  for (size_t i = 0; i < db->list_len; ++i) {
+    const DatabaseEntry* e = db->list[i];
+    if (e->city.len == 0) continue;
+    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
+           (e->sum / 10.0) / e->count, e->max / 10.0);
+  }
+
+  fflush(stdout);
+}
+
 typedef struct {
   File* f;
   Database* db;
 } WorkerData;
 
-static int worker_entrypoint(void* arg) {
+static int worker(void* arg) {
   WorkerData* wd = (WorkerData*)arg;
 
   for (String chunk = {}; FileNextChunk(wd->f, &chunk);) {
@@ -329,6 +342,44 @@ static int worker_entrypoint(void* arg) {
   }
 
   return 0;
+}
+
+static bool run(String file, int num_workers) {
+  File f = {};
+  if (!FileInit(&f, file, file.len / num_workers)) return false;
+
+  Database* databases = malloc(sizeof(Database) * num_workers);
+
+  WorkerData* worker_data = malloc(sizeof(WorkerData) * num_workers);
+  for (int i = 0; i < num_workers; ++i) {
+    worker_data[i].f = &f;
+    worker_data[i].db = &databases[i];
+  }
+
+  thrd_t* workers = malloc(sizeof(thrd_t) * num_workers);
+  for (int i = 0; i < num_workers; ++i) {
+    thrd_create(&workers[i], worker, &worker_data[i]);
+  }
+
+  for (int i = 0; i < num_workers; ++i) {
+    int res = 0;
+    thrd_join(workers[i], &res);
+  }
+
+  Database* db = &databases[0];
+
+  for (int i = 1; i < num_workers; ++i) {
+    DatabaseMerge(db, &databases[i]);
+  }
+
+  processDatabase(db);
+
+  mtx_destroy(&f.mtx);
+  free(worker_data);
+  free(databases);
+  free(workers);
+
+  return true;
 }
 
 static void test_StringRfind() {
@@ -369,19 +420,16 @@ static void test_worker() {
   String file = StringFromCstr(
       "aaaaaxxx;23.2\n"
       "aaaaa;23.2\n"
-      "bbbbbbbbbb;-42.3\n");
+      "bbbbbbbbbb;-42.3\n"
+      "aaaaaxxx;23.2\n"
+      "bbbbbbbbbb;-42.3\n"
+      "aaaaa;23.2\n"
+      "bbbbbbbbbb;-42.3\n"
+      "aaaaaxxx;23.2\n"
+      "bbbbbbbbbb;-42.3\n"
+      "aaaaaxxx;23.2\n");
 
-  File f = {};
-  FileInit(&f, file, 32);
-
-  Database db = {};
-
-  WorkerData wd = {
-      .f = &f,
-      .db = &db,
-  };
-
-  worker_entrypoint(&wd);
+  assert(run(file, 2));
 }
 
 static void run_tests() {
@@ -406,50 +454,9 @@ int main(int argc, char** argv) {
 
   const int num_workers = sysconf(_SC_NPROCESSORS_ONLN);
 
-  File f = {};
-  if (!FileInit(&f, file, file.len / num_workers)) return 1;
+  if (!run(file, num_workers)) return 1;
 
-  Database* databases = malloc(sizeof(Database) * num_workers);
-
-  WorkerData* worker_data = malloc(sizeof(WorkerData) * num_workers);
-  for (int i = 0; i < num_workers; ++i) {
-    worker_data[i].f = &f;
-    worker_data[i].db = &databases[i];
-  }
-
-  thrd_t* workers = malloc(sizeof(thrd_t) * num_workers);
-  for (int i = 0; i < num_workers; ++i) {
-    thrd_create(&workers[i], worker_entrypoint, &worker_data[i]);
-  }
-
-  for (int i = 0; i < num_workers; ++i) {
-    int res = 0;
-    thrd_join(workers[i], &res);
-  }
-
-  Database* db = &databases[0];
-
-  for (int i = 1; i < num_workers; ++i) {
-    DatabaseMerge(db, &databases[i]);
-  }
-
-  qsort(db->list, db->list_len, sizeof(DatabaseEntry*), citySorter);
-
-  for (size_t i = 0; i < db->list_len; ++i) {
-    const DatabaseEntry* e = db->list[i];
-    if (e->city.len == 0) continue;
-    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
-           (e->sum / 10.0) / e->count, e->max / 10.0);
-  }
-
-  fflush(stdout);
-
-  mtx_destroy(&f.mtx);
   munmap(file.ptr, file.len);
-
-  free(worker_data);
-  free(databases);
-  free(workers);
 
   return 0;
 }
