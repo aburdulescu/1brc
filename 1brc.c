@@ -328,12 +328,6 @@ static int worker_entrypoint(void* arg) {
     }
   }
 
-  for (size_t i = 0; i < wd->db->list_len; ++i) {
-    printf("%s\n", printableCity(wd->db->list[i]->city));
-  }
-
-  printf("len: %zu\n", wd->db->list_len);
-
   return 0;
 }
 
