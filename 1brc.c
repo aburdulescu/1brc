@@ -318,6 +318,7 @@ static int citySorter(const void* a, const void* b) {
 static void printDatabaseEntry(const DatabaseEntry* e) {
   printf("%s=%.1f/%.1f/%.1f", printableCity(e->city), e->min / 10.0,
          (e->sum / 10.0) / e->count, e->max / 10.0);
+  // TODO: sum/count/average is not correct
 }
 
 static void processDatabase(Database* db) {
