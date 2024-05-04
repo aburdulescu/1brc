@@ -189,7 +189,6 @@ fd_close:
 }
 
 typedef struct {
-  String base;
   String iter;
   mtx_t mtx;
 } File;
@@ -198,8 +197,7 @@ static bool initFile(File* f, String file) {
   if (mtx_init(&f->mtx, mtx_plain) != thrd_success) {
     return false;
   }
-  f->base = file;
-  f->iter = f->base;
+  f->iter = file;
   return true;
 }
 
@@ -357,19 +355,28 @@ int main(int argc, char** argv) {
 
   Database* databases = malloc(sizeof(Database) * num_workers);
 
+  WorkerData* worker_data = malloc(sizeof(WorkerData) * num_workers);
+  for (int i = 0; i < num_workers; ++i) {
+    worker_data[i].f = &f;
+    worker_data[i].db = &databases[i];
+  }
+
   thrd_t* workers = malloc(sizeof(thrd_t) * num_workers);
   for (int i = 0; i < num_workers; ++i) {
-    WorkerData* wd = malloc(sizeof(WorkerData));
-    wd->f = &f;
-    wd->db = &databases[i];
-
-    thrd_create(&workers[i], worker_entrypoint, wd);
+    thrd_create(&workers[i], worker_entrypoint, &worker_data[i]);
   }
 
   for (int i = 0; i < num_workers; ++i) {
     int res = 0;
     thrd_join(workers[i], &res);
   }
+
+  mtx_destroy(&f.mtx);
+  munmap(file.ptr, file.len);
+
+  free(worker_data);
+  free(databases);
+  free(workers);
 
   return 0;
 }
