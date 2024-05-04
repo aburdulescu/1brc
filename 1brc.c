@@ -315,15 +315,27 @@ static int citySorter(const void* a, const void* b) {
   return result;
 }
 
-void processDatabase(Database* db) {
+static void printDatabaseEntry(const DatabaseEntry* e) {
+  printf("%s=%f/%f/%f", printableCity(e->city), e->min / 10.0,
+         (e->sum / 10.0) / e->count, e->max / 10.0);
+}
+
+static void processDatabase(Database* db) {
   qsort(db->list, db->list_len, sizeof(DatabaseEntry*), citySorter);
 
-  for (size_t i = 0; i < db->list_len; ++i) {
+  printf("{");
+
+  // print all but last
+  for (size_t i = 0; i < db->list_len - 1; ++i) {
     const DatabaseEntry* e = db->list[i];
-    if (e->city.len == 0) continue;
-    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
-           (e->sum / 10.0) / e->count, e->max / 10.0);
+    printDatabaseEntry(e);
+    printf(", ");
   }
+
+  // print last one
+  printDatabaseEntry(db->list[db->list_len - 1]);
+
+  printf("}\n");
 
   fflush(stdout);
 }
