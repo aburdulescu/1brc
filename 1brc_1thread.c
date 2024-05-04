@@ -7,20 +7,12 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <threads.h>
 #include <unistd.h>
 
 typedef struct {
   char* ptr;
   size_t len;
 } String;
-
-char* StringPrintable(String s) {
-  char* c = malloc(s.len + 1);
-  memcpy(c, s.ptr, s.len);
-  c[s.len] = 0;
-  return c;
-}
 
 static char* StringFindChar(String s, char c) {
   return memchr(s.ptr, c, s.len);
@@ -148,12 +140,34 @@ static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   return true;
 }
 
+static bool parseTemp(String* l, int16_t* temp) {
+  // find newline
+  char* nl = StringFindChar(*l, '\n');
+  if (nl == NULL) {
+    return false;
+  }
+
+  String temp_str = {
+      .ptr = l->ptr,
+      .len = nl - l->ptr,
+  };
+
+  *temp = tempToInt(temp_str);
+
+  // skip
+  l->ptr = nl + 1;
+  l->len -= temp_str.len + 1;
+
+  return true;
+}
+
 static bool parseLine(String* l, Database* db) {
   String city = {};
   uint32_t city_hash = 0;
   if (!parseCity(l, &city, &city_hash)) return false;
 
-  const int16_t temp = tempToInt(*l);
+  int16_t temp = 0;
+  if (!parseTemp(l, &temp)) return false;
 
   updateDatabase(db, city, city_hash, temp);
 
@@ -186,41 +200,6 @@ fd_close:
   close(fd);
 
   return true;
-}
-
-typedef struct {
-  String base;
-  String iter;
-  mtx_t mtx;
-} File;
-
-static bool initFile(File* f, String file) {
-  if (mtx_init(&f->mtx, mtx_plain) != thrd_success) {
-    return false;
-  }
-  f->base = file;
-  f->iter = f->base;
-  return true;
-}
-
-static bool nextLine(File* f, String* line) {
-  if (mtx_lock(&f->mtx) != thrd_success) {
-    return false;
-  }
-
-  char* p = StringFindChar(f->iter, '\n');
-  if (p == NULL) {
-    mtx_unlock(&f->mtx);
-    return false;
-  }
-
-  line->ptr = f->iter.ptr;
-  line->len = p - f->iter.ptr;
-
-  f->iter.ptr = p + 1;
-  f->iter.len -= line->len + 1;
-
-  return mtx_unlock(&f->mtx) == thrd_success;
 }
 
 static void test_parseTemp() {
@@ -276,25 +255,7 @@ static void run(String file) {
   fflush(stdout);
 }
 
-static int worker_entrypoint(void* arg) {
-  File* f = (File*)arg;
-
-  Database db = {};
-
-  for (String line = {}; nextLine(f, &line);) {
-    parseLine(&line, &db);
-  }
-
-  for (size_t i = 0; i < db.list_len; ++i) {
-    printf("%s\n", printableCity(db.list[i]->city));
-  }
-
-  printf("db len: %zu\n", db.list_len);
-
-  return 0;
-}
-
-static void test_parseLine() {
+static void test_NextLine() {
   char s[] =
       "aaaaaxxx;23.2\n"
       "aaaaa;23.2\n"
@@ -305,24 +266,9 @@ static void test_parseLine() {
   run(file);
 }
 
-static void test_worker() {
-  char s[] =
-      "aaaaaxxx;23.2\n"
-      "aaaaa;23.2\n"
-      "bbbbbbbbbb;-42.3\n";
-
-  String file = {.ptr = s, .len = strlen(s)};
-
-  File f = {};
-  initFile(&f, file);
-
-  worker_entrypoint(&f);
-}
-
 static void run_tests() {
-  test_parseLine();
+  test_NextLine();
   test_parseTemp();
-  test_worker();
 }
 
 int main(int argc, char** argv) {
@@ -339,22 +285,9 @@ int main(int argc, char** argv) {
   String file = {};
   if (!mmapFile(file_path, &file)) return 1;
 
-  File f = {};
-  if (!initFile(&f, file)) return 1;
+  run(file);
 
-  const int num_workers = sysconf(_SC_NPROCESSORS_ONLN);
-
-  thrd_t* workers = malloc(sizeof(thrd_t) * num_workers);
-  for (int i = 0; i < num_workers; ++i) {
-    thrd_create(&workers[i], worker_entrypoint, &f);
-  }
-
-  // run(f.base);
-
-  for (int i = 0; i < num_workers; ++i) {
-    int res = 0;
-    thrd_join(workers[i], &res);
-  }
+  munmap(file.ptr, file.len);
 
   return 0;
 }
