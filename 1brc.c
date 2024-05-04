@@ -245,65 +245,69 @@ static void test_parseTemp() {
   }
 }
 
-static int citySorter(const void* a, const void* b) {
-  const DatabaseEntry* l = *(const DatabaseEntry**)a;
-  const DatabaseEntry* r = *(const DatabaseEntry**)b;
+/* static int citySorter(const void* a, const void* b) { */
+/*   const DatabaseEntry* l = *(const DatabaseEntry**)a; */
+/*   const DatabaseEntry* r = *(const DatabaseEntry**)b; */
 
-  const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
+/*   const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
+ */
 
-  const int result = memcmp(l->city.ptr, r->city.ptr, len);
+/*   const int result = memcmp(l->city.ptr, r->city.ptr, len); */
 
-  // if common part is the same, put first the smaller one
-  if (result == 0) return l->city.len - r->city.len;
+/*   // if common part is the same, put first the smaller one */
+/*   if (result == 0) return l->city.len - r->city.len; */
 
-  return result;
-}
+/*   return result; */
+/* } */
 
-static void run(String file) {
-  Database db = {};
-  for (String line = file; parseLine(&line, &db);) {
-  }
+/* static void run(String file) { */
+/*   Database db = {}; */
+/*   for (String line = file; parseLine(&line, &db);) { */
+/*   } */
 
-  qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter);
+/*   qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter); */
 
-  for (size_t i = 0; i < db.list_len; ++i) {
-    const DatabaseEntry* e = db.list[i];
-    if (e->city.len == 0) continue;
-    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
-           (e->sum / 10.0) / e->count, e->max / 10.0);
-  }
+/*   for (size_t i = 0; i < db.list_len; ++i) { */
+/*     const DatabaseEntry* e = db.list[i]; */
+/*     if (e->city.len == 0) continue; */
+/*     printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0, */
+/*            (e->sum / 10.0) / e->count, e->max / 10.0); */
+/*   } */
 
-  fflush(stdout);
-}
+/*   fflush(stdout); */
+/* } */
+
+typedef struct {
+  File* f;
+  Database* db;
+} WorkerData;
 
 static int worker_entrypoint(void* arg) {
-  File* f = (File*)arg;
+  WorkerData* wd = (WorkerData*)arg;
 
-  Database db = {};
-
-  for (String line = {}; nextLine(f, &line);) {
-    parseLine(&line, &db);
+  for (String line = {}; nextLine(wd->f, &line);) {
+    parseLine(&line, wd->db);
   }
 
-  for (size_t i = 0; i < db.list_len; ++i) {
-    printf("%s\n", printableCity(db.list[i]->city));
+  for (size_t i = 0; i < wd->db->list_len; ++i) {
+    printf("%s\n", printableCity(wd->db->list[i]->city));
   }
 
-  printf("db len: %zu\n", db.list_len);
+  printf("db len: %zu\n", wd->db->list_len);
 
   return 0;
 }
 
-static void test_parseLine() {
-  char s[] =
-      "aaaaaxxx;23.2\n"
-      "aaaaa;23.2\n"
-      "bbbbbbbbbb;-42.3\n";
+/* static void test_parseLine() { */
+/*   char s[] = */
+/*       "aaaaaxxx;23.2\n" */
+/*       "aaaaa;23.2\n" */
+/*       "bbbbbbbbbb;-42.3\n"; */
 
-  String file = {.ptr = s, .len = strlen(s)};
+/*   String file = {.ptr = s, .len = strlen(s)}; */
 
-  run(file);
-}
+/*   run(file); */
+/* } */
 
 static void test_worker() {
   char s[] =
@@ -316,12 +320,19 @@ static void test_worker() {
   File f = {};
   initFile(&f, file);
 
-  worker_entrypoint(&f);
+  Database db = {};
+
+  WorkerData wd = {
+      .f = &f,
+      .db = &db,
+  };
+
+  worker_entrypoint(&wd);
 }
 
 static void run_tests() {
-  test_parseLine();
   test_parseTemp();
+  //  test_parseLine();
   test_worker();
 }
 
@@ -344,12 +355,16 @@ int main(int argc, char** argv) {
 
   const int num_workers = sysconf(_SC_NPROCESSORS_ONLN);
 
+  Database* databases = malloc(sizeof(Database) * num_workers);
+
   thrd_t* workers = malloc(sizeof(thrd_t) * num_workers);
   for (int i = 0; i < num_workers; ++i) {
-    thrd_create(&workers[i], worker_entrypoint, &f);
-  }
+    WorkerData* wd = malloc(sizeof(WorkerData));
+    wd->f = &f;
+    wd->db = &databases[i];
 
-  // run(f.base);
+    thrd_create(&workers[i], worker_entrypoint, wd);
+  }
 
   for (int i = 0; i < num_workers; ++i) {
     int res = 0;
