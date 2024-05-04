@@ -14,6 +14,17 @@ typedef struct {
   size_t len;
 } String;
 
+static char* StringFindChar(String s, char c) {
+  return memchr(s.ptr, c, s.len);
+}
+
+static char* printableCity(String city) {
+  static char s[101];
+  memcpy(s, city.ptr, city.len);
+  s[city.len] = 0;
+  return s;
+}
+
 typedef struct {
   int16_t mul;
   int16_t val;
@@ -63,13 +74,6 @@ static int16_t tempToInt(String temp) {
   }
   const bool is_negative = temp.ptr[0] == '-';
   return is_negative ? (-1 * result) : result;
-}
-
-static char* printableCity(String city) {
-  static char s[101];
-  memcpy(s, city.ptr, city.len);
-  s[city.len] = 0;
-  return s;
 }
 
 #define MAX_CITIES 10000
@@ -126,7 +130,7 @@ static bool parseCity(String* l, String* city, uint32_t* city_hash) {
 
 static bool parseTemp(String* l, int16_t* temp) {
   // find newline
-  char* nl = memchr(l->ptr, '\n', l->len);
+  char* nl = StringFindChar(*l, '\n');
   if (nl == NULL) {
     return false;
   }
