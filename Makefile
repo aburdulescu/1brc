@@ -1,26 +1,19 @@
 CFLAGS = -Wall -Wextra -Werror -std=c11 -fno-omit-frame-pointer -g
 
-release:
-	gcc $(CFLAGS) -O3 -march=native 1brc.c
+release: build-release
 	/usr/bin/time -f "%e seconds, %M kbytes" ./a.out
 
-debug: build-debug
+debug: build-asan
 	./a.out measurements_small.txt
 
-debug-tsan: build-debug-tsan
-	./a.out measurements_small.txt
-
-test: build-debug
+test: build-asan
 	./a.out -t
 
-build-debug:
+build-asan:
 	gcc $(CFLAGS) -fsanitize=address,undefined 1brc.c
 
-build-debug-tsan:
-	gcc $(CFLAGS) -fsanitize=thread,undefined 1brc.c
-
-build-prof:
+build-release:
 	gcc $(CFLAGS) -O3 -march=native 1brc.c
 
-build-prof-debug:
+build-debug:
 	gcc $(CFLAGS) -O0 -march=native 1brc.c

@@ -99,6 +99,19 @@ static int16_t tempToInt(String temp) {
   return is_negative ? (-1 * result) : result;
 }
 
+// FNV-1a 32 bit
+static const uint32_t fnv1a_init_32 = 2166136261;
+static const uint32_t fnv1a_prime_32 = 16777619;
+
+uint32_t fnv1a(String s) {
+  uint32_t h = fnv1a_init_32;
+  for (size_t i = 0; i < s.len; ++i) {
+    h ^= s.ptr[i];
+    h *= fnv1a_prime_32;
+  }
+  return h;
+}
+
 #define MAX_CITIES 10000
 
 typedef struct {
@@ -129,11 +142,27 @@ void DatabaseUpdate(Database* db, String city, uint32_t city_hash,
   ++e->count;
 }
 
-static bool parseCity(String* l, String* city, uint32_t* city_hash) {
-  // FNV-1a 32 bit
-  static const uint32_t fnv1a_init_32 = 2166136261;
-  static const uint32_t fnv1a_prime_32 = 16777619;
+void DatabaseUpdateForMerge(Database* db, const DatabaseEntry* v) {
+  const uint32_t city_hash = fnv1a(v->city);
+  DatabaseEntry* e = &db->entries[city_hash % MAX_CITIES];
+  if (e->city.len == 0) {
+    e->city = v->city;
+    db->list[db->list_len] = e;
+    ++db->list_len;
+  }
+  if (v->min < e->min) e->min = v->min;
+  if (v->max > e->max) e->max = v->max;
+  e->sum += v->sum;
+  e->count += v->count;
+}
 
+void DatabaseMerge(Database* db, Database* other) {
+  for (size_t i = 0; i < other->list_len; ++i) {
+    DatabaseUpdateForMerge(db, other->list[i]);
+  }
+}
+
+static bool parseCity(String* l, String* city, uint32_t* city_hash) {
   // find separator and also hash the city
   char* sep = NULL;
   uint32_t h = fnv1a_init_32;
@@ -286,23 +315,6 @@ static int citySorter(const void* a, const void* b) {
   return result;
 }
 
-static void run(String file) {
-  Database db = {};
-  for (String line = file; parseLine(&line, &db);) {
-  }
-
-  qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter);
-
-  for (size_t i = 0; i < db.list_len; ++i) {
-    const DatabaseEntry* e = db.list[i];
-    if (e->city.len == 0) continue;
-    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
-           (e->sum / 10.0) / e->count, e->max / 10.0);
-  }
-
-  fflush(stdout);
-}
-
 typedef struct {
   File* f;
   Database* db;
@@ -359,17 +371,6 @@ static void test_parseTemp() {
   }
 }
 
-static void test_parseLine() {
-  char s[] =
-      "aaaaaxxx;23.2\n"
-      "aaaaa;23.2\n"
-      "bbbbbbbbbb;-42.3\n";
-
-  String file = {.ptr = s, .len = strlen(s)};
-
-  run(file);
-}
-
 static void test_worker() {
   String file = StringFromCstr(
       "aaaaaxxx;23.2\n"
@@ -393,8 +394,6 @@ static void run_tests() {
   test_StringRfind();
   test_parseTemp();
   test_worker();
-
-  (void)test_parseLine;
 }
 
 int main(int argc, char** argv) {
@@ -433,6 +432,23 @@ int main(int argc, char** argv) {
     int res = 0;
     thrd_join(workers[i], &res);
   }
+
+  Database* db = &databases[0];
+
+  for (int i = 1; i < num_workers; ++i) {
+    DatabaseMerge(db, &databases[i]);
+  }
+
+  qsort(db->list, db->list_len, sizeof(DatabaseEntry*), citySorter);
+
+  for (size_t i = 0; i < db->list_len; ++i) {
+    const DatabaseEntry* e = db->list[i];
+    if (e->city.len == 0) continue;
+    printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
+           (e->sum / 10.0) / e->count, e->max / 10.0);
+  }
+
+  fflush(stdout);
 
   mtx_destroy(&f.mtx);
   munmap(file.ptr, file.len);
