@@ -81,6 +81,7 @@ static int16_t tempToInt(String temp) {
 typedef struct {
   String cities[MAX_CITIES];
   int64_t sums[MAX_CITIES];
+  int16_t counts[MAX_CITIES];
   int16_t mins[MAX_CITIES];
   int16_t maxs[MAX_CITIES];
 } Database;
@@ -92,6 +93,7 @@ void updateDatabase(Database* db, String city, uint32_t city_hash,
   if (temp > db->maxs[pos]) db->maxs[pos] = temp;
   if (temp < db->mins[pos]) db->mins[pos] = temp;
   db->sums[pos] += temp;
+  ++db->counts[pos];
 }
 
 static bool parseCity(String* l, String* city, uint32_t* city_hash) {
@@ -219,8 +221,9 @@ static void run(String file) {
 
   for (size_t i = 0; i < MAX_CITIES; i++) {
     if (db.cities[i].len == 0) continue;
-    printf("%s %f %f %f\n", printableCity(db.cities[i]), db.mins[i] / 10.0,
-           db.maxs[i] / 10.0, db.sums[i] / 10.0);
+    printf("%s = %f / %f / %f\n", printableCity(db.cities[i]),
+           db.mins[i] / 10.0, (db.sums[i] / 10.0) / db.counts[i],
+           db.maxs[i] / 10.0);
   }
   fflush(stdout);
 }
