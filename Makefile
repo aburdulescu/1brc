@@ -7,7 +7,7 @@ debug: build-asan
 	./a.out measurements_small.txt
 
 test: build-asan
-	./a.out -t
+	./a.out test
 
 build-asan:
 	gcc $(CFLAGS) -fsanitize=address,undefined 1brc.c

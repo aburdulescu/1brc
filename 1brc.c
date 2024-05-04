@@ -439,7 +439,7 @@ static void run_tests() {
 }
 
 int main(int argc, char** argv) {
-  if (argc > 1 && strcmp(argv[1], "-t") == 0) {
+  if (argc > 1 && strcmp(argv[1], "test") == 0) {
     run_tests();
     return 0;
   }
