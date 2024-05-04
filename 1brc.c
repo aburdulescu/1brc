@@ -88,6 +88,8 @@ typedef struct {
 
 typedef struct {
   DatabaseEntry entries[MAX_CITIES];
+  DatabaseEntry* list[MAX_CITIES];
+  size_t list_len;
 } Database;
 
 void updateDatabase(Database* db, String city, uint32_t city_hash,
@@ -95,9 +97,11 @@ void updateDatabase(Database* db, String city, uint32_t city_hash,
   DatabaseEntry* e = &db->entries[city_hash % MAX_CITIES];
   if (e->city.len == 0) {
     e->city = city;
+    db->list[db->list_len] = e;
+    ++db->list_len;
   }
-  if (temp > e->min) e->min = temp;
-  if (temp < e->max) e->max = temp;
+  if (temp < e->min) e->min = temp;
+  if (temp > e->max) e->max = temp;
   e->sum += temp;
   ++e->count;
 }
@@ -220,13 +224,29 @@ static void test_parseTemp() {
   }
 }
 
+static int citySorter(const void* a, const void* b) {
+  const DatabaseEntry* l = *(const DatabaseEntry**)a;
+  const DatabaseEntry* r = *(const DatabaseEntry**)b;
+
+  const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
+
+  const int result = memcmp(l->city.ptr, r->city.ptr, len);
+
+  // if common part is the same, put first the smaller one
+  if (result == 0) return l->city.len - r->city.len;
+
+  return result;
+}
+
 static void run(String file) {
   Database db = {};
   for (String line = file; parseLine(&line, &db);) {
   }
 
-  for (size_t i = 0; i < MAX_CITIES; ++i) {
-    const DatabaseEntry* e = &db.entries[i];
+  qsort(db.list, db.list_len, sizeof(DatabaseEntry*), citySorter);
+
+  for (size_t i = 0; i < db.list_len; ++i) {
+    const DatabaseEntry* e = db.list[i];
     if (e->city.len == 0) continue;
     printf("%s = %f / %f / %f\n", printableCity(e->city), e->min / 10.0,
            (e->sum / 10.0) / e->count, e->max / 10.0);
@@ -237,6 +257,7 @@ static void run(String file) {
 
 static void test_NextLine() {
   char s[] =
+      "aaaaaxxx;23.2\n"
       "aaaaa;23.2\n"
       "bbbbbbbbbb;-42.3\n";
 
