@@ -34,7 +34,7 @@ And cd into it: `cd 1brc`
 
 Generate `measurements.txt`: `./create_measurements.sh 1000000000`
 
-Generate file with "golden" output: `./calculate_average_baseline.sh > golden.txt`
+Generate file with "golden" output: `./calculate_average_baseline.sh | tee golden.txt`
 
 Go back to our repo: `cd ..`
 
