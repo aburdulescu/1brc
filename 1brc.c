@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -284,39 +285,22 @@ fd_close:
 
 typedef struct {
   String iter;
-  mtx_t mtx;
   size_t chunk_size;
 } File;
 
-static bool FileInit(File* f, String file, size_t chunk_size) {
-  if (mtx_init(&f->mtx, mtx_plain) != thrd_success) {
-    return false;
-  }
-  f->iter = file;
-  f->chunk_size = chunk_size;
-  return true;
-}
-
 static bool FileNextChunk(File* f, String* chunk) {
-  if (mtx_lock(&f->mtx) != thrd_success) {
-    return false;
-  }
-
-  if (f->iter.len == 0) {
-    mtx_unlock(&f->mtx);
+  if (StringEmpty(f->iter)) {
     return false;
   }
 
   if (f->iter.len < f->chunk_size) {
     *chunk = f->iter;
     f->iter = (String){};
-    mtx_unlock(&f->mtx);
     return true;
   }
 
   char* p = StringRfind(StringSlice(f->iter, 0, f->chunk_size), '\n');
   if (p == NULL) {
-    mtx_unlock(&f->mtx);
     return false;
   }
 
@@ -326,7 +310,7 @@ static bool FileNextChunk(File* f, String* chunk) {
   f->iter.ptr = p + 1;
   f->iter.len -= chunk->len;
 
-  return mtx_unlock(&f->mtx) == thrd_success;
+  return true;
 }
 
 static int citySorter(const void* a, const void* b) {
@@ -365,18 +349,48 @@ static void processDatabase(Database* db) {
 
   printf("}\n");
 
+  printf("len=%zu\n", db->list_len);
+
   fflush(stdout);
 }
 
 typedef struct {
-  File* f;
+  String* ptr;
+  size_t len;
+  atomic_uint i;
+} Chunks;
+
+static void ChunksInit(Chunks* c, size_t cap) {
+  c->ptr = malloc(cap * sizeof(String));
+  c->len = 0;
+  atomic_init(&c->i, 0);
+}
+
+static void ChunksAdd(Chunks* c, String chunk) {
+  c->ptr[c->len] = chunk;
+  ++c->len;
+}
+
+static bool ChunksGet(Chunks* c, String* chunk) {
+  unsigned int i = atomic_load(&c->i);
+  do {
+    if (i == c->len) {
+      return false;
+    }
+    *chunk = c->ptr[i];
+  } while (!atomic_compare_exchange_weak(&c->i, &i, i + 1));
+  return true;
+}
+
+typedef struct {
+  Chunks* chunks;
   Database* db;
 } WorkerData;
 
 static int worker(void* arg) {
   WorkerData* wd = (WorkerData*)arg;
 
-  for (String chunk = {}; FileNextChunk(wd->f, &chunk);) {
+  for (String chunk = {}; ChunksGet(wd->chunks, &chunk);) {
     while (parseLine(&chunk, wd->db)) {
     }
   }
@@ -384,15 +398,21 @@ static int worker(void* arg) {
   return 0;
 }
 
-static bool run(String file, int num_workers) {
-  File f = {};
-  if (!FileInit(&f, file, file.len / num_workers)) return false;
+static bool run(String file, int num_workers, size_t chunk_size) {
+  File f = {.iter = file, .chunk_size = chunk_size};
+
+  Chunks chunks = {};
+  ChunksInit(&chunks, (file.len / chunk_size) + 1);
+
+  for (String chunk = {}; FileNextChunk(&f, &chunk);) {
+    ChunksAdd(&chunks, chunk);
+  }
 
   Database* databases = malloc(sizeof(Database) * num_workers);
 
   WorkerData* worker_data = malloc(sizeof(WorkerData) * num_workers);
   for (int i = 0; i < num_workers; ++i) {
-    worker_data[i].f = &f;
+    worker_data[i].chunks = &chunks;
     worker_data[i].db = &databases[i];
   }
 
@@ -413,11 +433,6 @@ static bool run(String file, int num_workers) {
   }
 
   processDatabase(db);
-
-  mtx_destroy(&f.mtx);
-  free(worker_data);
-  free(databases);
-  free(workers);
 
   return true;
 }
@@ -469,7 +484,7 @@ static void test_worker() {
       "bbbbbbbbbb;-42.3\n"
       "aaaaaxxx;23.2\n");
 
-  assert(run(file, 2));
+  assert(run(file, 2, 32));
 }
 
 static void run_tests() {
@@ -493,10 +508,9 @@ int main(int argc, char** argv) {
   if (!mmapFile(file_path, &file)) return 1;
 
   const int num_workers = sysconf(_SC_NPROCESSORS_ONLN);
+  const size_t chunk_size = 32 * 1024 * 1024;
 
-  if (!run(file, num_workers)) return 1;
-
-  munmap(file.ptr, file.len);
+  if (!run(file, num_workers, chunk_size)) return 1;
 
   return 0;
 }
