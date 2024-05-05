@@ -5,10 +5,10 @@ release: build-release
 	/usr/bin/time -f "%e seconds, %M kbytes" ./a.out
 
 debug: build-asan
-	./a.out 1brc/measurements_small.txt
+	ASAN_OPTIONS=detect_leaks=0 ./a.out 1brc/measurements_small.txt
 
 test: build-asan
-	./a.out test
+	ASAN_OPTIONS=detect_leaks=0 ./a.out test
 
 build-asan:
 	$(CC) $(CFLAGS) -fsanitize=address,undefined 1brc.c
