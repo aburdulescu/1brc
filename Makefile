@@ -1,4 +1,4 @@
-CC = gcc
+CC = clang
 CFLAGS = -Wall -Wextra -Werror -std=c11 -fno-omit-frame-pointer -g
 
 release: build-release
