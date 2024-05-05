@@ -1,6 +1,7 @@
 measurements*.txt
 a.out
 callgrind.*
+cachegrind.*
 1brc/
 cpu.prof
 gperftool-dist/
