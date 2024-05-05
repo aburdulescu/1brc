@@ -121,7 +121,7 @@ static uint32_t fnv1a(String s) {
 typedef struct {
   String city;
   int64_t sum;
-  uint16_t count;
+  uint64_t count;
   int16_t min;
   int16_t max;
 } DatabaseEntry;
@@ -344,13 +344,8 @@ static int citySorter(const void* a, const void* b) {
 }
 
 static void printDatabaseEntry(const DatabaseEntry* e) {
-  int64_t sum = e->sum;
-  if (sum > 0)
-    sum += e->count / 2;
-  else
-    sum -= e->count / 2;
   printf("%s=%.1f/%.1f/%.1f", printableCity(e->city), e->min / 10.0,
-         (sum / 10.0) / e->count, e->max / 10.0);
+         (e->sum / 10.0) / e->count, e->max / 10.0);
 }
 
 static void processDatabase(Database* db) {
@@ -370,7 +365,6 @@ static void processDatabase(Database* db) {
 
   printf("}\n");
 
-  printf("len=%zu\n", db->list_len);
   fflush(stdout);
 }
 
