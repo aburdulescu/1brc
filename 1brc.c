@@ -193,7 +193,7 @@ static void DatabaseMerge(Database* db, Database* other) {
   }
 }
 
-static bool parseCity(String* l, String* city, Hash* city_hash) {
+static void parseCity(String* l, String* city, Hash* city_hash) {
   // find separator and also hash the city
   char* sep = NULL;
   Hash h = fnv1a_offset_32;
@@ -204,9 +204,6 @@ static bool parseCity(String* l, String* city, Hash* city_hash) {
     }
     h ^= l->ptr[i];
     h *= fnv1a_prime_32;
-  }
-  if (sep == NULL) {
-    return false;
   }
 
   // set city
@@ -219,16 +216,11 @@ static bool parseCity(String* l, String* city, Hash* city_hash) {
   // skip
   l->ptr = sep + 1;
   l->len -= city->len + 1;
-
-  return true;
 }
 
-static bool parseTemp(String* l, int16_t* temp) {
+static void parseTemp(String* l, int16_t* temp) {
   // find newline
   char* nl = StringFind(*l, '\n');
-  if (nl == NULL) {
-    return false;
-  }
 
   String temp_str = {
       .ptr = l->ptr,
@@ -240,21 +232,17 @@ static bool parseTemp(String* l, int16_t* temp) {
   // skip
   l->ptr = nl + 1;
   l->len -= temp_str.len + 1;
-
-  return true;
 }
 
-static bool parseLine(String* l, Database* db) {
+static void parseLine(String* l, Database* db) {
   String city = {};
   Hash city_hash = 0;
-  if (!parseCity(l, &city, &city_hash)) return false;
+  parseCity(l, &city, &city_hash);
 
   int16_t temp = 0;
-  if (!parseTemp(l, &temp)) return false;
+  parseTemp(l, &temp);
 
   DatabaseUpdate(db, city, city_hash, temp);
-
-  return true;
 }
 
 static bool mmapFile(const char* path, String* out) {
@@ -373,6 +361,7 @@ static void ChunksAdd(Chunks* c, String chunk) {
   ++c->len;
 }
 
+// TODO: why it returns empty chunks?
 static bool ChunksGet(Chunks* c, String* chunk) {
   unsigned int i = atomic_load(&c->i);
   do {
@@ -393,8 +382,7 @@ static int worker(void* arg) {
   WorkerData* wd = (WorkerData*)arg;
 
   for (String chunk = {}; ChunksGet(wd->chunks, &chunk);) {
-    while (parseLine(&chunk, wd->db)) {
-    }
+    while (!StringEmpty(chunk)) parseLine(&chunk, wd->db);
   }
 
   return 0;
