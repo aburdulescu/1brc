@@ -361,7 +361,6 @@ static void ChunksAdd(Chunks* c, String chunk) {
   ++c->len;
 }
 
-// TODO: why it returns empty chunks?
 static bool ChunksGet(Chunks* c, String* chunk) {
   unsigned int i = atomic_load(&c->i);
   do {
