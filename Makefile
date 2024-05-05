@@ -19,6 +19,6 @@ build-release:
 build-debug:
 	$(CC) $(CFLAGS) -O0 -march=native 1brc.c -static
 
-profile: build-debug
+profile:
 	LD_PRELOAD=$(shell pwd)/gperftool-dist/lib/libprofiler.so CPUPROFILE=cpu.prof ./a.out
 	pprof -http=: cpu.prof
