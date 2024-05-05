@@ -15,6 +15,8 @@ typedef struct {
   size_t len;
 } String;
 
+static bool StringEmpty(String s) { return s.len == 0 || s.ptr == NULL; }
+
 static String StringFromCstr(char* c) {
   String s = {.ptr = c, .len = strlen(c)};
   return s;
@@ -100,11 +102,13 @@ static int16_t tempToInt(String temp) {
 }
 
 // FNV-1a 32 bit
-static const uint32_t fnv1a_init_32 = 2166136261;
+static const uint32_t fnv1a_offset_32 = 2166136261;
 static const uint32_t fnv1a_prime_32 = 16777619;
 
-uint32_t fnv1a(String s) {
-  uint32_t h = fnv1a_init_32;
+typedef uint32_t Hash;
+
+static uint32_t fnv1a(String s) {
+  uint32_t h = fnv1a_offset_32;
   for (size_t i = 0; i < s.len; ++i) {
     h ^= s.ptr[i];
     h *= fnv1a_prime_32;
@@ -128,24 +132,35 @@ typedef struct {
   size_t list_len;
 } Database;
 
-void DatabaseUpdate(Database* db, String city, uint32_t city_hash,
-                    int16_t temp) {
-  DatabaseEntry* e = &db->entries[city_hash % MAX_CITIES];
-  if (e->city.len == 0) {
-    e->city = city;
-    db->list[db->list_len] = e;
-    ++db->list_len;
-  }
-  if (temp < e->min) e->min = temp;
-  if (temp > e->max) e->max = temp;
-  e->sum += temp;
-  ++e->count;
+static bool StringEquals(String s, String other) {
+  if (s.len != other.len) return false;
+  return memcmp(s.ptr, other.ptr, s.len) == 0;
 }
 
-void DatabaseUpdateForMerge(Database* db, const DatabaseEntry* v) {
-  const uint32_t city_hash = fnv1a(v->city);
-  DatabaseEntry* e = &db->entries[city_hash % MAX_CITIES];
-  if (e->city.len == 0) {
+static Hash DatabaseFindSlot(Database* db, const DatabaseEntry* v,
+                             Hash city_hash) {
+  Hash slot = city_hash % MAX_CITIES;
+  for (; slot < MAX_CITIES; ++slot) {
+    const DatabaseEntry* e = &db->entries[slot];
+
+    // found an empty slot
+    if (StringEmpty(e->city)) break;
+
+    // found the same city
+    if (StringEquals(e->city, v->city)) break;
+  }
+
+  assert(slot < MAX_CITIES);
+
+  return slot;
+}
+
+static void DatabaseUpdateEntry(Database* db, const DatabaseEntry* v,
+                                Hash city_hash) {
+  const Hash slot = DatabaseFindSlot(db, v, city_hash);
+  DatabaseEntry* e = &db->entries[slot];
+  if (StringEmpty(e->city)) {
+    // if slot is empty, add the city
     e->city = v->city;
     db->list[db->list_len] = e;
     ++db->list_len;
@@ -156,16 +171,29 @@ void DatabaseUpdateForMerge(Database* db, const DatabaseEntry* v) {
   e->count += v->count;
 }
 
-void DatabaseMerge(Database* db, Database* other) {
+static void DatabaseUpdate(Database* db, String city, Hash city_hash,
+                           int16_t temp) {
+  const DatabaseEntry v = {
+      .city = city,
+      .sum = temp,
+      .count = 1,
+      .min = temp,
+      .max = temp,
+  };
+  DatabaseUpdateEntry(db, &v, city_hash);
+}
+
+static void DatabaseMerge(Database* db, Database* other) {
   for (size_t i = 0; i < other->list_len; ++i) {
-    DatabaseUpdateForMerge(db, other->list[i]);
+    const Hash city_hash = fnv1a(other->list[i]->city);
+    DatabaseUpdateEntry(db, other->list[i], city_hash);
   }
 }
 
-static bool parseCity(String* l, String* city, uint32_t* city_hash) {
+static bool parseCity(String* l, String* city, Hash* city_hash) {
   // find separator and also hash the city
   char* sep = NULL;
-  uint32_t h = fnv1a_init_32;
+  Hash h = fnv1a_offset_32;
   for (size_t i = 0; i < l->len; ++i) {
     if (l->ptr[i] == ';') {
       sep = l->ptr + i;
@@ -215,7 +243,7 @@ static bool parseTemp(String* l, int16_t* temp) {
 
 static bool parseLine(String* l, Database* db) {
   String city = {};
-  uint32_t city_hash = 0;
+  Hash city_hash = 0;
   if (!parseCity(l, &city, &city_hash)) return false;
 
   int16_t temp = 0;
@@ -316,9 +344,13 @@ static int citySorter(const void* a, const void* b) {
 }
 
 static void printDatabaseEntry(const DatabaseEntry* e) {
+  int64_t sum = e->sum;
+  if (sum > 0)
+    sum += e->count / 2;
+  else
+    sum -= e->count / 2;
   printf("%s=%.1f/%.1f/%.1f", printableCity(e->city), e->min / 10.0,
-         (e->sum / 10.0) / e->count, e->max / 10.0);
-  // TODO: sum/count/average is not correct
+         (sum / 10.0) / e->count, e->max / 10.0);
 }
 
 static void processDatabase(Database* db) {
@@ -338,6 +370,7 @@ static void processDatabase(Database* db) {
 
   printf("}\n");
 
+  printf("len=%zu\n", db->list_len);
   fflush(stdout);
 }
 
