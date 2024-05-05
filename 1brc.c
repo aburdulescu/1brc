@@ -117,7 +117,8 @@ static uint32_t fnv1a(String s) {
   return h;
 }
 
-#define MAX_CITIES 10000
+// max is 10000 but we need a power of 2
+#define MAX_CITIES (1 << 14)
 
 typedef struct {
   String city;
@@ -140,7 +141,8 @@ static bool StringEquals(String s, String other) {
 
 static Hash DatabaseFindSlot(Database* db, const DatabaseEntry* v,
                              Hash city_hash) {
-  Hash slot = city_hash % MAX_CITIES;
+  Hash slot = city_hash & (MAX_CITIES - 1);
+
   for (; slot < MAX_CITIES; ++slot) {
     const DatabaseEntry* e = &db->entries[slot];
 
