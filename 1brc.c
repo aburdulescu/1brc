@@ -46,6 +46,14 @@ static inline char* StringRfind(String s, char c) {
   return NULL;
 }
 
+static inline int StringCompare(String s, String other) {
+  const size_t len = (s.len < other.len) ? s.len : other.len;
+  int result = memcmp(s.ptr, other.ptr, len);
+  // if common part is the same, put first the smaller one
+  if (result == 0) result = s.len - other.len;
+  return result;
+}
+
 static inline bool StringEquals(String s, String other) {
   if (s.len != other.len) return false;
   return memcmp(s.ptr, other.ptr, s.len) == 0;
@@ -303,17 +311,8 @@ static bool FileNextChunk(File* f, String* chunk) {
 }
 
 static int citySorter(const void* a, const void* b) {
-  const DatabaseEntry* l = *(const DatabaseEntry**)a;
-  const DatabaseEntry* r = *(const DatabaseEntry**)b;
-
-  const size_t len = (l->city.len < r->city.len) ? l->city.len : r->city.len;
-
-  const int result = memcmp(l->city.ptr, r->city.ptr, len);
-
-  // if common part is the same, put first the smaller one
-  if (result == 0) return l->city.len - r->city.len;
-
-  return result;
+  return StringCompare((*(const DatabaseEntry**)a)->city,
+                       (*(const DatabaseEntry**)b)->city);
 }
 
 static inline void printDatabaseEntry(const DatabaseEntry* e) {
@@ -426,6 +425,8 @@ static bool run(String file, int num_workers, size_t chunk_size) {
 }
 
 static void test_StringRfind() {
+  printf("==== %s ====\n", __FUNCTION__);
+
   {
     char* p = StringRfind(StringFromCstr("abcXdef"), 'X');
     assert(p != NULL);
@@ -440,7 +441,33 @@ static void test_StringRfind() {
   }
 }
 
+static void test_StringCompare() {
+  printf("==== %s ====\n", __FUNCTION__);
+
+  const struct {
+    char* l;
+    char* r;
+  } tests[] = {
+      {"a", "aa"},
+      {"a", "bb"},
+      {"bb", "a"},
+      {"aa", "aa"},
+  };
+  const size_t tests_len = sizeof(tests) / sizeof(tests[0]);
+
+  for (size_t i = 0; i < tests_len; ++i) {
+    const int want = strcmp(tests[i].l, tests[i].r);
+    const int have =
+        StringCompare(StringFromCstr(tests[i].l), StringFromCstr(tests[i].r));
+    printf("l=%s, r=%s, want=%d, have=%d\n", tests[i].l, tests[i].r, want,
+           have);
+    assert(have == want);
+  }
+}
+
 static void test_parseTemp() {
+  printf("==== %s ====\n", __FUNCTION__);
+
   typedef struct {
     char* input;
     int16_t expected;
@@ -460,6 +487,8 @@ static void test_parseTemp() {
 }
 
 static void test_worker() {
+  printf("==== %s ====\n", __FUNCTION__);
+
   String file = StringFromCstr(
       "aaaaaxxx;23.2\n"
       "aaaaa;23.2\n"
@@ -477,6 +506,7 @@ static void test_worker() {
 
 static void run_tests() {
   test_StringRfind();
+  test_StringCompare();
   test_parseTemp();
   test_worker();
 }
