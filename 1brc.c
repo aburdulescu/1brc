@@ -16,14 +16,14 @@ typedef struct {
   size_t len;
 } String;
 
-static bool StringEmpty(String s) { return s.len == 0 || s.ptr == NULL; }
+static inline bool StringEmpty(String s) { return s.len == 0 || s.ptr == NULL; }
 
-static String StringFromCstr(char* c) {
+static inline String StringFromCstr(char* c) {
   String s = {.ptr = c, .len = strlen(c)};
   return s;
 }
 
-static String StringSlice(String s, size_t begin, size_t end) {
+static inline String StringSlice(String s, size_t begin, size_t end) {
   String r = {.ptr = s.ptr + begin, .len = end};
   return r;
 }
@@ -35,28 +35,33 @@ char* StringToCstr(String s) {
   return c;
 }
 
-static char* StringFind(String s, char c) { return memchr(s.ptr, c, s.len); }
+static inline char* StringFind(String s, char c) {
+  return memchr(s.ptr, c, s.len);
+}
 
-static char* StringRfind(String s, char c) {
+static inline char* StringRfind(String s, char c) {
   for (int i = s.len - 1; i >= 0; --i) {
     if (s.ptr[i] == c) return s.ptr + i;
   }
   return NULL;
 }
 
-static char* printableCity(String city) {
+static inline bool StringEquals(String s, String other) {
+  if (s.len != other.len) return false;
+  return memcmp(s.ptr, other.ptr, s.len) == 0;
+}
+
+static inline char* printableCity(String city) {
   static char s[101];
   memcpy(s, city.ptr, city.len);
   s[city.len] = 0;
   return s;
 }
 
-typedef struct {
+static const struct {
   int16_t mul;
   int16_t val;
-} TempTableEntry;
-
-static const TempTableEntry temp_table[256] = {
+} temp_table[256] = {
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
@@ -91,7 +96,7 @@ static const TempTableEntry temp_table[256] = {
     {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},  {1, 0},
 };
 
-static int16_t tempToInt(String temp) {
+static inline int16_t tempToInt(String temp) {
   int16_t result = 0;
   for (size_t i = 0; i < temp.len; ++i) {
     const uint8_t c = temp.ptr[i];
@@ -108,7 +113,7 @@ static const uint32_t fnv1a_prime_32 = 16777619;
 
 typedef uint32_t Hash;
 
-static uint32_t fnv1a(String s) {
+static inline uint32_t fnv1a(String s) {
   uint32_t h = fnv1a_offset_32;
   for (size_t i = 0; i < s.len; ++i) {
     h ^= s.ptr[i];
@@ -134,13 +139,8 @@ typedef struct {
   size_t list_len;
 } Database;
 
-static bool StringEquals(String s, String other) {
-  if (s.len != other.len) return false;
-  return memcmp(s.ptr, other.ptr, s.len) == 0;
-}
-
-static Hash DatabaseFindSlot(Database* db, const DatabaseEntry* v,
-                             Hash city_hash) {
+static inline Hash DatabaseFindSlot(Database* db, const DatabaseEntry* v,
+                                    Hash city_hash) {
   Hash slot = city_hash & (MAX_CITIES - 1);
 
   for (; slot < MAX_CITIES; ++slot) {
@@ -158,8 +158,8 @@ static Hash DatabaseFindSlot(Database* db, const DatabaseEntry* v,
   return slot;
 }
 
-static void DatabaseUpdateEntry(Database* db, const DatabaseEntry* v,
-                                Hash city_hash) {
+static inline void DatabaseUpdateEntry(Database* db, const DatabaseEntry* v,
+                                       Hash city_hash) {
   const Hash slot = DatabaseFindSlot(db, v, city_hash);
   DatabaseEntry* e = &db->entries[slot];
   if (StringEmpty(e->city)) {
@@ -174,8 +174,8 @@ static void DatabaseUpdateEntry(Database* db, const DatabaseEntry* v,
   e->count += v->count;
 }
 
-static void DatabaseUpdate(Database* db, String city, Hash city_hash,
-                           int16_t temp) {
+static inline void DatabaseUpdate(Database* db, String city, Hash city_hash,
+                                  int16_t temp) {
   const DatabaseEntry v = {
       .city = city,
       .sum = temp,
@@ -186,14 +186,14 @@ static void DatabaseUpdate(Database* db, String city, Hash city_hash,
   DatabaseUpdateEntry(db, &v, city_hash);
 }
 
-static void DatabaseMerge(Database* db, Database* other) {
+static inline void DatabaseMerge(Database* db, Database* other) {
   for (size_t i = 0; i < other->list_len; ++i) {
     const Hash city_hash = fnv1a(other->list[i]->city);
     DatabaseUpdateEntry(db, other->list[i], city_hash);
   }
 }
 
-static void parseCity(String* l, String* city, Hash* city_hash) {
+static inline void parseCity(String* l, String* city, Hash* city_hash) {
   // find separator and also hash the city
   char* sep = NULL;
   Hash h = fnv1a_offset_32;
@@ -218,7 +218,7 @@ static void parseCity(String* l, String* city, Hash* city_hash) {
   l->len -= city->len + 1;
 }
 
-static void parseTemp(String* l, int16_t* temp) {
+static inline int16_t parseTemp(String* l) {
   // find newline
   char* nl = StringFind(*l, '\n');
 
@@ -227,20 +227,19 @@ static void parseTemp(String* l, int16_t* temp) {
       .len = nl - l->ptr,
   };
 
-  *temp = tempToInt(temp_str);
-
   // skip
   l->ptr = nl + 1;
   l->len -= temp_str.len + 1;
+
+  return tempToInt(temp_str);
 }
 
-static void parseLine(String* l, Database* db) {
+static inline void parseLine(String* l, Database* db) {
   String city = {};
   Hash city_hash = 0;
   parseCity(l, &city, &city_hash);
 
-  int16_t temp = 0;
-  parseTemp(l, &temp);
+  const int16_t temp = parseTemp(l);
 
   DatabaseUpdate(db, city, city_hash, temp);
 }
@@ -317,12 +316,12 @@ static int citySorter(const void* a, const void* b) {
   return result;
 }
 
-static void printDatabaseEntry(const DatabaseEntry* e) {
+static inline void printDatabaseEntry(const DatabaseEntry* e) {
   printf("%s=%.1f/%.1f/%.1f", printableCity(e->city), e->min / 10.0,
          (e->sum / 10.0) / e->count, e->max / 10.0);
 }
 
-static void processDatabase(Database* db) {
+static inline void processDatabase(Database* db) {
   qsort(db->list, db->list_len, sizeof(DatabaseEntry*), citySorter);
 
   printf("{");
@@ -350,18 +349,18 @@ typedef struct {
   atomic_uint i;
 } Chunks;
 
-static void ChunksInit(Chunks* c, size_t cap) {
+static inline void ChunksInit(Chunks* c, size_t cap) {
   c->ptr = malloc(cap * sizeof(String));
   c->len = 0;
   atomic_init(&c->i, 0);
 }
 
-static void ChunksAdd(Chunks* c, String chunk) {
+static inline void ChunksAdd(Chunks* c, String chunk) {
   c->ptr[c->len] = chunk;
   ++c->len;
 }
 
-static bool ChunksGet(Chunks* c, String* chunk) {
+static inline bool ChunksGet(Chunks* c, String* chunk) {
   unsigned int i = atomic_load(&c->i);
   do {
     if (i == c->len) {
