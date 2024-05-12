@@ -2,14 +2,41 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"sort"
 	"strings"
 )
 
 func main() {
-	in, err := os.Open(os.Args[1])
+
+	cpuProfile := flag.Bool("cpuprofile", false, "Write CPU profile")
+	memProfile := flag.Bool("memprofile", false, "Write memory profile")
+
+	flag.Parse()
+
+	if *cpuProfile {
+		f, err := os.Create("cpu.profile")
+		if err != nil {
+			panic(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+	defer func() {
+		if *memProfile {
+			f, err := os.Create("mem.profile")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			pprof.WriteHeapProfile(f)
+			f.Close()
+		}
+	}()
+
+	in, err := os.Open(flag.Arg(0))
 	if err != nil {
 		panic(err)
 	}
@@ -105,8 +132,8 @@ func parseTemp(temp string) int16 {
 }
 
 type Stats struct {
-	min int16
-	max int16
 	sum int64
 	cnt int64
+	min int16
+	max int16
 }

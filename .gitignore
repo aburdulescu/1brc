@@ -3,6 +3,6 @@ a.out
 callgrind.*
 cachegrind.*
 1brc/
-cpu.prof
 gperftool-dist/
 1brc-go
+*.profile
