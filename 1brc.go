@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"runtime/pprof"
 	"sort"
@@ -44,62 +45,30 @@ func main() {
 
 	s := bufio.NewScanner(in)
 
-	stats := map[string]*Stats{}
+	stats := StatsMapNew()
 
 	for s.Scan() {
-		if err := parseLine(stats, s.Text()); err != nil {
-			panic(err)
-		}
+		parseLine(stats, s.Text())
 	}
-
 	if err := s.Err(); err != nil {
 		panic(err)
 	}
 
-	cities := make([]string, 0, len(stats))
-	for city := range stats {
-		cities = append(cities, city)
-	}
-	sort.Strings(cities)
-
-	for _, city := range cities {
-		s := stats[city]
-		fmt.Printf(
-			"%s=%.1f/%.1f/%.1f\n",
-			city,
-			float32(s.min)/10,
-			float32(s.sum)/float32(s.cnt)/10,
-			float32(s.max)/10,
-		)
-	}
+	stats.print()
 }
 
-func parseLine(stats map[string]*Stats, line string) error {
+func parseLine(stats *StatsMap, line string) {
 	sep := strings.IndexByte(line, ';')
 
 	city := line[:sep]
+
+	h := fnv.New32a()
+	h.Write([]byte(city))
+	cityHash := h.Sum32()
+
 	temp := parseTemp(line[sep+1:])
 
-	s, ok := stats[city]
-	if ok {
-		s.sum += int64(temp)
-		s.cnt++
-		if temp > s.max {
-			s.max = temp
-		}
-		if temp < s.min {
-			s.min = temp
-		}
-	} else {
-		stats[city] = &Stats{
-			min: temp,
-			max: temp,
-			sum: int64(temp),
-			cnt: 1,
-		}
-	}
-
-	return nil
+	stats.add(city, cityHash, temp)
 }
 
 func parseTemp(temp string) int16 {
@@ -132,8 +101,70 @@ func parseTemp(temp string) int16 {
 }
 
 type Stats struct {
-	sum int64
-	cnt int64
-	min int16
-	max int16
+	city string
+	sum  int64
+	cnt  int64
+	min  int16
+	max  int16
+}
+
+// max is 10000 but we need a power of 2
+const MAX_CITIES = (1 << 14)
+
+type StatsMap struct {
+	entries [MAX_CITIES]Stats
+	list    []*Stats
+}
+
+func StatsMapNew() *StatsMap {
+	return &StatsMap{
+		list: make([]*Stats, 0, MAX_CITIES),
+	}
+}
+
+func (sm *StatsMap) add(city string, cityHash uint32, temp int16) {
+	slot := cityHash & (MAX_CITIES - 1)
+	for ; slot < MAX_CITIES; slot++ {
+		e := &sm.entries[slot]
+		if e.city == "" {
+			break
+		}
+		if e.city == city {
+			break
+		}
+	}
+	if slot >= MAX_CITIES {
+		panic("slot >= MAX_CITIES")
+	}
+
+	e := &sm.entries[slot]
+	if e.city == "" {
+		// if slot is empty, add city and update list
+		e.city = city
+		sm.list = append(sm.list, e)
+	}
+	e.sum += int64(temp)
+	e.cnt++
+	if temp > e.max {
+		e.max = temp
+	}
+	if temp < e.min {
+		e.min = temp
+	}
+}
+
+func (sm StatsMap) print() {
+	sort.Slice(sm.list[:], func(i, j int) bool {
+		return sm.list[i].city < sm.list[j].city
+	})
+
+	for _, s := range sm.list {
+		fmt.Printf(
+			"%s=%.1f/%.1f/%.1f\n",
+			s.city,
+			float32(s.min)/10,
+			float32(s.sum)/float32(s.cnt)/10,
+			float32(s.max)/10,
+		)
+	}
 }
