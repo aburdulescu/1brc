@@ -75,10 +75,10 @@ func main() {
 }
 
 func parseLine(stats map[string]*Stats, line string) error {
-	parts := strings.Split(line, ";")
+	sep := strings.IndexByte(line, ';')
 
-	city := parts[0]
-	temp := parseTemp(parts[1])
+	city := line[:sep]
+	temp := parseTemp(line[sep+1:])
 
 	s, ok := stats[city]
 	if ok {
