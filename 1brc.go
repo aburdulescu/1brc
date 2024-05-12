@@ -4,15 +4,12 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"runtime/pprof"
 	"sort"
-	"strings"
 )
 
 func main() {
-
 	cpuProfile := flag.Bool("cpuprofile", false, "Write CPU profile")
 	memProfile := flag.Bool("memprofile", false, "Write memory profile")
 
@@ -57,14 +54,25 @@ func main() {
 	stats.print()
 }
 
+const (
+	fnv1aOffset32 = uint32(2166136261)
+	fnv1aPrime32  = uint32(16777619)
+)
+
 func parseLine(stats *StatsMap, line string) {
-	sep := strings.IndexByte(line, ';')
+	sep := -1
+	cityHash := fnv1aOffset32
+
+	for i := range line {
+		if line[i] == ';' {
+			sep = i
+			break
+		}
+		cityHash ^= uint32(line[i])
+		cityHash *= fnv1aPrime32
+	}
 
 	city := line[:sep]
-
-	h := fnv.New32a()
-	h.Write([]byte(city))
-	cityHash := h.Sum32()
 
 	temp := parseTemp(line[sep+1:])
 
@@ -81,19 +89,24 @@ func parseTemp(temp string) int16 {
 
 	var result int16
 
+	// add 1st integer digit
 	result = int16(temp[i] - '0')
 	i++
 
 	if temp[i] != '.' {
+		// add 2nd integer digit
 		result = result*10 + int16(temp[i]-'0')
 		i++
 	}
 
+	// skip '.'
 	i++
 
+	// add decimal
 	result = result*10 + int16(temp[i]-'0')
 
 	if isNeg {
+		// add sign
 		return result * (-1)
 	}
 
