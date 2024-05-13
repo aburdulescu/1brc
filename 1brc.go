@@ -1,9 +1,11 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/pprof"
 	"sort"
@@ -40,18 +42,42 @@ func main() {
 	}
 	defer in.Close()
 
-	s := bufio.NewScanner(in)
+	const chunkSize = 16 * 1024 * 1024
 
-	stats := StatsMapNew()
-
-	for s.Scan() {
-		parseLine(stats, s.Text())
-	}
-	if err := s.Err(); err != nil {
+	if err := processFile(in, chunkSize); err != nil {
 		panic(err)
+	}
+}
+
+func processFile(in io.Reader, chunkSize int) error {
+	stats := NewStatsMap()
+
+	buf := make([]byte, chunkSize)
+	off := 0
+	for {
+		n, err := in.Read(buf[off:])
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			panic(err)
+		}
+
+		nn := n + off
+
+		nl := bytes.LastIndexByte(buf[:nn], '\n')
+
+		for chunk := buf[:nl+1]; len(chunk) != 0; {
+			chunk = parseLine(stats, chunk)
+		}
+
+		copy(buf, buf[nl+1:nn])
+		off = nn - nl - 1
 	}
 
 	stats.print()
+
+	return nil
 }
 
 const (
@@ -59,7 +85,7 @@ const (
 	fnv1aPrime32  = uint32(16777619)
 )
 
-func parseLine(stats *StatsMap, line string) {
+func parseLine(stats *StatsMap, line []byte) []byte {
 	sep := -1
 	cityHash := fnv1aOffset32
 
@@ -73,10 +99,16 @@ func parseLine(stats *StatsMap, line string) {
 	}
 
 	city := line[:sep]
+	line = line[sep+1:]
 
-	temp := parseTemp(line[sep+1:])
+	nl := bytes.IndexByte(line, '\n')
+
+	temp := parseTemp(line[:nl])
+	line = line[nl+1:]
 
 	stats.add(city, cityHash, temp)
+
+	return line
 }
 
 var tempTable = [256]struct {
@@ -117,11 +149,11 @@ var tempTable = [256]struct {
 	{1, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 0},
 }
 
-func parseTemp(temp string) int16 {
+func parseTemp(temp []byte) int16 {
 	result := int16(0)
-	for i := range temp {
-		result *= tempTable[temp[i]].mul
-		result += tempTable[temp[i]].val
+	for _, b := range temp {
+		result *= tempTable[b].mul
+		result += tempTable[b].val
 	}
 	if temp[0] == '-' {
 		result *= -1
@@ -130,7 +162,7 @@ func parseTemp(temp string) int16 {
 }
 
 type Stats struct {
-	city string
+	city []byte
 	sum  int64
 	cnt  int64
 	min  int16
@@ -145,20 +177,20 @@ type StatsMap struct {
 	list    []*Stats
 }
 
-func StatsMapNew() *StatsMap {
+func NewStatsMap() *StatsMap {
 	return &StatsMap{
 		list: make([]*Stats, 0, MAX_CITIES),
 	}
 }
 
-func (sm *StatsMap) add(city string, cityHash uint32, temp int16) {
+func (sm *StatsMap) add(city []byte, cityHash uint32, temp int16) {
 	slot := cityHash & (MAX_CITIES - 1)
 	for ; slot < MAX_CITIES; slot++ {
 		e := &sm.entries[slot]
-		if e.city == "" {
+		if len(e.city) == 0 {
 			break
 		}
-		if e.city == city {
+		if bytes.Equal(e.city, city) {
 			break
 		}
 	}
@@ -167,9 +199,10 @@ func (sm *StatsMap) add(city string, cityHash uint32, temp int16) {
 	}
 
 	e := &sm.entries[slot]
-	if e.city == "" {
+	if len(e.city) == 0 {
 		// if slot is empty, add city and update list
-		e.city = city
+		e.city = make([]byte, len(city))
+		copy(e.city, city)
 		sm.list = append(sm.list, e)
 	}
 	e.sum += int64(temp)
@@ -184,7 +217,7 @@ func (sm *StatsMap) add(city string, cityHash uint32, temp int16) {
 
 func (sm StatsMap) print() {
 	sort.Slice(sm.list[:], func(i, j int) bool {
-		return sm.list[i].city < sm.list[j].city
+		return bytes.Compare(sm.list[i].city, sm.list[j].city) < 0
 	})
 
 	for _, s := range sm.list {
