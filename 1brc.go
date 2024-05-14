@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"sort"
 )
@@ -42,7 +43,16 @@ func main() {
 	}
 	defer in.Close()
 
-	const chunkSize = 16 * 1024 * 1024
+	numWorkers := runtime.NumCPU()
+
+	q := make(chan []byte, numWorkers)
+	defer close(q)
+
+	for i := 0; i < numWorkers; i++ {
+		go doWork(q)
+	}
+
+	const chunkSize = 32 * 1024 * 1024
 
 	if err := processFile(in, chunkSize); err != nil {
 		panic(err)
@@ -78,6 +88,15 @@ func processFile(in io.Reader, chunkSize int) error {
 	stats.print()
 
 	return nil
+}
+
+func doWork(q chan []byte) {
+	for {
+		chunk, ok := <-q
+		if !ok {
+			return
+		}
+	}
 }
 
 const (
