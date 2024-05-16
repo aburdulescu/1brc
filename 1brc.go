@@ -16,8 +16,10 @@ import (
 var (
 	cpuProfile = flag.Bool("cpuprofile", false, "Write CPU profile")
 	memProfile = flag.Bool("memprofile", false, "Write memory profile")
-	chunkSize  = flag.Int("s", 32*1024*1024, "Chunk size")
+	chunkSize  = flag.Int("s", 128*1024*1024, "Chunk size")
 )
+
+var numWorkers = runtime.NumCPU()
 
 func main() {
 	flag.Parse()
@@ -47,8 +49,6 @@ func main() {
 	}
 	defer in.Close()
 
-	numWorkers := runtime.NumCPU()
-
 	inChan := make(chan []byte, numWorkers)
 	outChan := make(chan *StatsMap, numWorkers)
 
@@ -69,15 +69,48 @@ func main() {
 	stats.print()
 }
 
-var chunkPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, *chunkSize)
-	},
+type ChunkPool struct {
+	mtx    sync.RWMutex
+	chunks [][]byte
 }
+
+func NewChunkPool() *ChunkPool {
+	cp := &ChunkPool{}
+	for i := 0; i < numWorkers; i++ {
+		c := make([]byte, *chunkSize)
+		cp.chunks = append(cp.chunks, c)
+	}
+	return cp
+}
+
+func (cp *ChunkPool) Get() []byte {
+	cp.mtx.Lock()
+	defer cp.mtx.Unlock()
+
+	if len(cp.chunks) == 0 {
+		c := make([]byte, *chunkSize)
+		cp.chunks = append(cp.chunks, c)
+	}
+
+	r := cp.chunks[0]
+
+	cp.chunks = cp.chunks[1:]
+
+	return r
+}
+
+func (cp *ChunkPool) Put(c []byte) {
+	cp.mtx.Lock()
+	defer cp.mtx.Unlock()
+
+	cp.chunks = append(cp.chunks, c)
+}
+
+var chunkPool = NewChunkPool()
 
 func processFile(f *os.File, workerChan chan []byte) {
 	for {
-		buf := chunkPool.Get().([]byte)
+		buf := chunkPool.Get()
 
 		n, err := f.Read(buf)
 		if errors.Is(err, io.EOF) {
