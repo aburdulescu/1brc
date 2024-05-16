@@ -10,12 +10,16 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
+	"sync"
+)
+
+var (
+	cpuProfile = flag.Bool("cpuprofile", false, "Write CPU profile")
+	memProfile = flag.Bool("memprofile", false, "Write memory profile")
+	chunkSize  = flag.Int("s", 32*1024*1024, "Chunk size")
 )
 
 func main() {
-	cpuProfile := flag.Bool("cpuprofile", false, "Write CPU profile")
-	memProfile := flag.Bool("memprofile", false, "Write memory profile")
-
 	flag.Parse()
 
 	if *cpuProfile {
@@ -45,57 +49,75 @@ func main() {
 
 	numWorkers := runtime.NumCPU()
 
-	q := make(chan []byte, numWorkers)
-	defer close(q)
+	inChan := make(chan []byte, numWorkers)
+	outChan := make(chan *StatsMap, numWorkers)
 
 	for i := 0; i < numWorkers; i++ {
-		go doWork(q)
+		go doWork(inChan, outChan)
 	}
 
-	const chunkSize = 32 * 1024 * 1024
+	processFile(in, inChan)
 
-	if err := processFile(in, chunkSize); err != nil {
-		panic(err)
-	}
-}
+	close(inChan)
 
-func processFile(in io.Reader, chunkSize int) error {
-	stats := NewStatsMap()
+	stats := <-outChan
 
-	buf := make([]byte, chunkSize)
-	off := 0
-	for {
-		n, err := in.Read(buf[off:])
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			panic(err)
-		}
-
-		nn := n + off
-
-		nl := bytes.LastIndexByte(buf[:nn], '\n')
-
-		for chunk := buf[:nl+1]; len(chunk) != 0; {
-			chunk = parseLine(stats, chunk)
-		}
-
-		copy(buf, buf[nl+1:nn])
-		off = nn - nl - 1
+	for i := 1; i < numWorkers; i++ {
+		stats.merge(<-outChan)
 	}
 
 	stats.print()
-
-	return nil
 }
 
-func doWork(q chan []byte) {
+var chunkPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, *chunkSize)
+	},
+}
+
+func processFile(f *os.File, workerChan chan []byte) {
 	for {
-		chunk, ok := <-q
+		buf := chunkPool.Get().([]byte)
+
+		n, err := f.Read(buf)
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			fmt.Println("file read error:", err)
+			return
+		}
+
+		nl := bytes.LastIndexByte(buf[:n], '\n')
+
+		workerChan <- buf[:nl+1]
+
+		nleft := int64(nl + 1 - n)
+
+		if _, err := f.Seek(nleft, 1); err != nil {
+			fmt.Println("file seek error:", err)
+			return
+		}
+	}
+}
+
+func doWork(in chan []byte, out chan *StatsMap) {
+	stats := NewStatsMap()
+	defer func() {
+		out <- stats
+	}()
+
+	for {
+		chunk, ok := <-in
 		if !ok {
 			return
 		}
+
+		for len(chunk) != 0 {
+			chunk = parseLine(stats, chunk)
+		}
+
+		chunkPool.Put(chunk[:cap(chunk)])
 	}
 }
 
@@ -103,6 +125,15 @@ const (
 	fnv1aOffset32 = uint32(2166136261)
 	fnv1aPrime32  = uint32(16777619)
 )
+
+func fnv1a(b []byte) uint32 {
+	result := fnv1aOffset32
+	for _, v := range b {
+		result ^= uint32(v)
+		result *= fnv1aPrime32
+	}
+	return result
+}
 
 func parseLine(stats *StatsMap, line []byte) []byte {
 	sep := -1
@@ -117,15 +148,22 @@ func parseLine(stats *StatsMap, line []byte) []byte {
 		cityHash *= fnv1aPrime32
 	}
 
+	if sep == -1 {
+		panic("line has no separator")
+	}
+
 	city := line[:sep]
 	line = line[sep+1:]
 
 	nl := bytes.IndexByte(line, '\n')
+	if sep == -1 {
+		panic("line has no newline")
+	}
 
 	temp := parseTemp(line[:nl])
 	line = line[nl+1:]
 
-	stats.add(city, cityHash, temp)
+	stats.update(city, cityHash, temp)
 
 	return line
 }
@@ -202,14 +240,20 @@ func NewStatsMap() *StatsMap {
 	}
 }
 
-func (sm *StatsMap) add(city []byte, cityHash uint32, temp int16) {
+func (sm *StatsMap) merge(other *StatsMap) {
+	for _, e := range other.list {
+		sm.add(e, fnv1a(e.city))
+	}
+}
+
+func (sm *StatsMap) add(stats *Stats, cityHash uint32) {
 	slot := cityHash & (MAX_CITIES - 1)
 	for ; slot < MAX_CITIES; slot++ {
 		e := &sm.entries[slot]
 		if len(e.city) == 0 {
 			break
 		}
-		if bytes.Equal(e.city, city) {
+		if bytes.Equal(e.city, stats.city) {
 			break
 		}
 	}
@@ -220,18 +264,29 @@ func (sm *StatsMap) add(city []byte, cityHash uint32, temp int16) {
 	e := &sm.entries[slot]
 	if len(e.city) == 0 {
 		// if slot is empty, add city and update list
-		e.city = make([]byte, len(city))
-		copy(e.city, city)
+		e.city = make([]byte, len(stats.city))
+		copy(e.city, stats.city)
 		sm.list = append(sm.list, e)
 	}
-	e.sum += int64(temp)
-	e.cnt++
-	if temp > e.max {
-		e.max = temp
+	e.sum += stats.sum
+	e.cnt += stats.cnt
+	if stats.max > e.max {
+		e.max = stats.max
 	}
-	if temp < e.min {
-		e.min = temp
+	if stats.min < e.min {
+		e.min = stats.min
 	}
+}
+
+func (sm *StatsMap) update(city []byte, cityHash uint32, temp int16) {
+	stats := &Stats{
+		city: city,
+		sum:  int64(temp),
+		max:  temp,
+		min:  temp,
+		cnt:  1,
+	}
+	sm.add(stats, cityHash)
 }
 
 func (sm StatsMap) print() {
